@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import json
 import base64
+import re
 from io import BytesIO
 from PIL import Image
 from openai import OpenAI
@@ -45,45 +46,43 @@ MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador estrella de Gym Soci
 ## REGLAS INQUEBRANTABLES:
 - NUNCA manipulación, negging o desinterés fingido.
 - Explica el "por qué" psicológico.
-- Tono cálido, motivador y con humor ligero. Español de Venezuela natural.
+- Tono cálido, motivador y con humor ligero. Español latino neutro.
 - Las 3 respuestas deben ser para "TÚ".
 
 Devuelve SOLO un JSON válido, sin markdown."""
 
 # ------------------------------------------------------------
-# PROMPTS DEL ICEBREAKER
+# PROMPT DEL ICEBREAKER
 # ------------------------------------------------------------
-ICEBREAKER_SYSTEM_PROMPT = """Eres 'El Icebreaker', el maestro del primer mensaje en Gym Social. Tu misión es ayudar a hombres a crear líneas de apertura irresistibles, con chispa, respeto y un toque de seducción elegante.
+ICEBREAKER_SYSTEM_PROMPT = """Eres 'El Icebreaker', el experto en primeros mensajes de Gym Social. Creas líneas de apertura cortas, coquetas y divertidas.
 
 ## TU OBJETIVO
-Generar EXACTAMENTE 5 líneas de apertura personalizadas, breves y magnéticas, basadas en el perfil y el contexto proporcionado.
+Generar EXACTAMENTE 5 líneas de apertura. Cada línea debe ser UNA SOLA FRASE, máximo 2 frases muy cortas.
 
 ## LAS 5 LÍNEAS (UNA DE CADA TIPO)
-1. **Divertida**: Ingeniosa, ocurrente, que saque una sonrisa genuina.
-2. **Observación Encantadora**: Una lectura sutil de su personalidad o estilo, que demuestre que la has visto de verdad. Cómplice y cálida.
-3. **Pregunta con Gancho**: Una pregunta abierta y curiosa que sea irresistible de responder. Nada de entrevistas aburridas.
-4. **Cumplido No Físico**: Halago breve y genuino sobre su energía, creatividad, gusto musical o elección de palabras. Nada de cuerpos.
-5. **Wildcard (Comodín)**: La línea más audaz pero elegante. Una afirmación segura, un desafío juguetón o un juego de roles sutil.
+1. **Divertida**: Humor ingenioso y actual.
+2. **Observación Encantadora**: Detalle sutil de su perfil.
+3. **Pregunta con Gancho**: Curiosa e irresistible.
+4. **Cumplido No Físico**: Sobre su energía o estilo.
+5. **Wildcard (Comodín)**: Audaz y desafiante.
 
 ## REGLAS DE ESTILO (CRÍTICAS)
-- Cada línea debe ser CORTA: máximo 2 frases. El impacto está en la brevedad.
-- Tono COQUETO y ENCANTADOR, como un galán moderno: cálido, seguro, divertido pero no payaso.
-- NUNCA uses piropos vulgares, lenguaje soez, ni emoticones empalagosos.
-- Español de Venezuela con naturalidad: "chamo", "chévere", "mano".
-- Usa la información del contexto extra como oro para personalizar.
+- MUY CORTO: cada línea debe ser 1 frase, máximo 2 muy cortas.
+- COQUETO y GRACIOSO: tono galán divertido y seguro.
+- NUNCA vulgar ni empalagoso.
+- Español latino neutro, sin regionalismos.
+- SIEMPRE prioriza el contexto extra sobre la descripción del perfil.
 
 ## FORMATO DE RESPUESTA (JSON)
 {
-  "perfil_resumen": "Breve descripción de su vibe en 2-3 frases",
+  "perfil_resumen": "Máximo 1 frase sobre su vibe",
   "lineas": [
-    {"tipo": "divertida", "texto": "...", "porque": "Por qué funciona este humor"},
-    {"tipo": "observacion_encantadora", "texto": "...", "porque": "Por qué esta lectura sutil es magnética"},
-    {"tipo": "pregunta_con_gancho", "texto": "...", "porque": "Por qué esta pregunta engancha"},
-    {"tipo": "cumplido_no_fisico", "texto": "...", "porque": "Por qué este halago es poderoso"},
-    {"tipo": "wildcard", "texto": "...", "porque": "Por qué este movimiento es audaz y atractivo"}
+    {"tipo": "...", "texto": "...", "porque": "..."},
+    ...
   ]
 }
 Devuelve SOLO el JSON. Sin texto adicional."""
+
 
 # ------------------------------------------------------------
 # FUNCIONES COMUNES
@@ -96,6 +95,15 @@ def resize_image_for_api(img: Image.Image, max_width=512):
     buf = BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def normalizar_clave(texto):
+    texto = texto.lower()
+    texto = re.sub(r'\(.*?\)', '', texto)
+    texto = re.sub(r'[^a-záéíóúñü]+', '_', texto)
+    texto = re.sub(r'_+', '_', texto)
+    return texto.strip('_')
+
 
 # ------------------------------------------------------------
 # FUNCIONES DEL MONITOR
@@ -123,10 +131,13 @@ Devuelve SOLO un array JSON: [{"sender":"TÚ","message":"..."},{"sender":"ELLA",
         temperature=0, max_tokens=600
     )
     resultado = response.choices[0].message.content.strip()
-    if resultado.startswith("```json"): resultado = resultado[7:]
-    elif resultado.startswith("```"): resultado = resultado[3:]
+    if resultado.startswith("```json"):
+        resultado = resultado[7:]
+    elif resultado.startswith("```"):
+        resultado = resultado[3:]
     if resultado.endswith("```"): resultado = resultado[:-3]
     return json.loads(resultado.strip())
+
 
 def eliminar_replies(conversacion):
     if not conversacion: return conversacion
@@ -138,17 +149,21 @@ def eliminar_replies(conversacion):
         for j in range(i):
             prev = resultado[j]
             if prev["message"].strip() == texto_i and prev["sender"] != sender_i:
-                if i+1 < len(resultado) and resultado[i+1]["sender"] == sender_i: indices.add(i)
-                elif i > 0 and resultado[i-1]["sender"] == sender_i: indices.add(i)
-                elif i == len(resultado)-1: indices.add(i)
+                if i + 1 < len(resultado) and resultado[i + 1]["sender"] == sender_i:
+                    indices.add(i)
+                elif i > 0 and resultado[i - 1]["sender"] == sender_i:
+                    indices.add(i)
+                elif i == len(resultado) - 1:
+                    indices.add(i)
                 break
-        for j in range(max(0, i-4), i):
+        for j in range(max(0, i - 4), i):
             prev = resultado[j]
             if prev["message"].strip() == texto_i and prev["sender"] == sender_i:
                 indices.add(i)
                 break
     for i in sorted(indices, reverse=True): del resultado[i]
     return resultado
+
 
 def analizar_con_deepseek(conversacion, contexto="", temperatura=0.8):
     conversacion_texto = json.dumps(conversacion, ensure_ascii=False, indent=2)
@@ -160,23 +175,20 @@ def analizar_con_deepseek(conversacion, contexto="", temperatura=0.8):
         temperature=temperatura, max_tokens=2500
     )
     resultado = response.choices[0].message.content.strip()
-    if resultado.startswith("```json"): resultado = resultado[7:]
-    elif resultado.startswith("```"): resultado = resultado[3:]
+    if resultado.startswith("```json"):
+        resultado = resultado[7:]
+    elif resultado.startswith("```"):
+        resultado = resultado[3:]
     if resultado.endswith("```"): resultado = resultado[:-3]
     return json.loads(resultado)
+
 
 # ------------------------------------------------------------
 # FUNCIONES DEL ICEBREAKER
 # ------------------------------------------------------------
 def extraer_perfil_qwen(image: Image.Image):
     image_data = resize_image_for_api(image)
-    prompt = """Analiza esta captura de un perfil de Instagram (o similar). Describe en detalle todo lo que veas:
-- Nombre de la persona (si aparece).
-- Biografía (texto completo, sin inventar).
-- Intereses o aficiones que se deduzcan de la bio o de las fotos.
-- Estilo visual (colores, tipo de fotos, si es artística, fitness, fiestera, etc.).
-- Cualquier otro detalle relevante de las historias destacadas, publicaciones o emojis.
-Escribe la descripción en un solo texto plano, sin formato JSON, para que un sistema de IA pueda generar líneas de apertura personalizadas."""
+    prompt = """Analiza esta captura de perfil de Instagram/Tinder. Describe en MÁXIMO 2 oraciones breves: quién es (nombre si se ve), intereses claros y estilo visual general. Sé conciso. No inventes, solo lo que se aprecie en la imagen."""
 
     response = client_openrouter.chat.completions.create(
         model="qwen/qwen3-vl-32b-instruct",
@@ -187,32 +199,106 @@ Escribe la descripción en un solo texto plano, sin formato JSON, para que un si
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
             ]
         }],
-        temperature=0, max_tokens=600
+        temperature=0, max_tokens=300
     )
     return response.choices[0].message.content.strip()
+
 
 def generar_icebreakers(descripcion_perfil, contexto_extra="", temperatura=0.95):
     base_info = f"Descripción del perfil:\n{descripcion_perfil}" if descripcion_perfil else "El perfil no tiene texto descriptivo."
     if contexto_extra:
-        mensaje_usuario = f"{base_info}\n\nInfo extra del usuario:\n{contexto_extra}"
+        mensaje_usuario = f"{base_info}\n\nContexto adicional del usuario (PRIORITARIO):\n{contexto_extra}"
     else:
         mensaje_usuario = f"{base_info}\n\n(Sin contexto extra. Sé creativo.)"
 
-    response = client_deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "system", "content": ICEBREAKER_SYSTEM_PROMPT}, {"role": "user", "content": mensaje_usuario}],
-        temperature=temperatura, max_tokens=1500
-    )
-    resultado = response.choices[0].message.content.strip()
-    if resultado.startswith("```json"): resultado = resultado[7:]
-    elif resultado.startswith("```"): resultado = resultado[3:]
-    if resultado.endswith("```"): resultado = resultado[:-3]
-    return json.loads(resultado)
+    for intento in range(2):
+        response = client_deepseek.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "system", "content": ICEBREAKER_SYSTEM_PROMPT},
+                      {"role": "user", "content": mensaje_usuario}],
+            temperature=temperatura if intento == 0 else 0,
+            max_tokens=1000
+        )
+        resultado = response.choices[0].message.content.strip()
+        if resultado.startswith("```json"):
+            resultado = resultado[7:]
+        elif resultado.startswith("```"):
+            resultado = resultado[3:]
+        if resultado.endswith("```"): resultado = resultado[:-3]
+
+        try:
+            return json.loads(resultado)
+        except json.JSONDecodeError:
+            ultimo_cierre = resultado.rfind('}')
+            if ultimo_cierre != -1:
+                try:
+                    return json.loads(resultado[:ultimo_cierre + 1])
+                except json.JSONDecodeError:
+                    pass
+            if intento == 1:
+                st.error("❌ La IA devolvió un formato inválido dos veces. Intenta de nuevo con otro perfil o contexto.")
+                return {"perfil_resumen": "", "lineas": []}
+
+
+# ------------------------------------------------------------
+# BOTÓN DE COPIAR (ROBUSTO, CON FALLBACK)
+# ------------------------------------------------------------
+def copy_button(text):
+    """Botón que copia al portapapeles con feedback visual y fallback para navegadores antiguos."""
+    escaped = text.replace("`", "\\`").replace("$", "\\$")
+    html = f"""
+    <button onclick="
+        var txt = `{escaped}`;
+        if (navigator.clipboard) {{
+            navigator.clipboard.writeText(txt).then(function() {{
+                this.innerHTML = '✅ Copiado';
+                setTimeout(()=>{{ this.innerHTML = '📋 Copiar'; }}, 2000);
+            }}.bind(this));
+        }} else {{
+            var el = document.createElement('textarea');
+            el.value = txt;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            this.innerHTML = '✅ Copiado';
+            setTimeout(()=>{{ this.innerHTML = '📋 Copiar'; }}, 2000);
+        }}
+    " style="
+        background: linear-gradient(135deg, #FF6B6B, #FF8E8E);
+        color: white; border: none; padding: 5px 15px;
+        border-radius: 20px; cursor: pointer; font-size: 13px;
+        font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        transition: all 0.2s;
+    ">📋 Copiar</button>
+    """
+    st.components.v1.html(html, height=40)
+
 
 # ------------------------------------------------------------
 # INTERFAZ PRINCIPAL CON NAVEGACIÓN LATERAL
 # ------------------------------------------------------------
 st.set_page_config(page_title="Gym Social", page_icon="🏋️", layout="wide")
+
+# CSS para móvil y tarjetas
+st.markdown("""
+<style>
+    @media (max-width: 600px) {
+        .stImage img {
+            max-width: 280px !important;
+            margin: 0 auto;
+        }
+    }
+    .icebreaker-card {
+        border: 1px solid #eee;
+        border-radius: 15px;
+        padding: 15px;
+        margin-bottom: 10px;
+        background-color: #fafafa;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.title("🏋️ Gym Social")
 modo = st.sidebar.radio("Elige una herramienta:", ["📊 Monitor de Chats", "🧊 Icebreaker"])
 
@@ -223,7 +309,6 @@ if modo == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
     st.caption("Sube una captura de chat y recibe tu diagnóstico al instante")
 
-    # Inicializar estado de sesión del Monitor
     if 'conv_monitor' not in st.session_state:
         st.session_state.conv_monitor = None
     if 'extraccion_monitor' not in st.session_state:
@@ -233,17 +318,18 @@ if modo == "📊 Monitor de Chats":
     if 'temp_actual' not in st.session_state:
         st.session_state.temp_actual = 0.8
 
-    uploaded = st.file_uploader("Selecciona una captura de WhatsApp/Instagram", type=["png","jpg","jpeg"], key="monitor_upload")
+    uploaded = st.file_uploader("Selecciona una captura de WhatsApp/Instagram", type=["png", "jpg", "jpeg"],
+                                key="monitor_upload")
     if uploaded:
         image = Image.open(uploaded)
-        st.image(image, caption="Vista previa", width=400)
+        st.image(image, caption="Vista previa", width=300)
         if st.button("🔍 Analizar conversación"):
             with st.spinner("Extrayendo mensajes..."):
                 crudos = extraer_chat_qwen(image)
                 conversacion = eliminar_replies(crudos)
                 st.session_state.conv_monitor = conversacion
                 st.session_state.extraccion_monitor = True
-                st.session_state.diagnostico_actual = None  # Resetear diagnóstico anterior
+                st.session_state.diagnostico_actual = None
                 st.session_state.temp_actual = 0.8
 
         if st.session_state.extraccion_monitor:
@@ -256,44 +342,29 @@ if modo == "📊 Monitor de Chats":
 
             if st.checkbox("¿La extracción es correcta?"):
                 contexto = st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...")
-
-                # Botón para ejecutar (o regenerar) diagnóstico
                 boton_texto = "🔄 Obtener otro diagnóstico" if st.session_state.diagnostico_actual else "🧠 Ejecutar diagnóstico"
                 if st.button(boton_texto):
-                    # Si ya hay un diagnóstico previo, subimos la temperatura
                     if st.session_state.diagnostico_actual:
                         st.session_state.temp_actual = min(st.session_state.temp_actual + 0.05, 1.2)
-                    with st.spinner(f"Analizando (temperatura: {st.session_state.temp_actual:.2f})..."):
+                    with st.spinner(f"Analizando..."):
                         analisis = analizar_con_deepseek(conv, contexto, temperatura=st.session_state.temp_actual)
                         st.session_state.diagnostico_actual = analisis
 
-                # Mostrar diagnóstico si existe
                 if st.session_state.diagnostico_actual:
                     analisis = st.session_state.diagnostico_actual
-                    if st.session_state.temp_actual == 0.8:
-                        st.subheader(f"🎯 {analisis['diagnosis']['title']}")
-                    else:
-                        st.subheader(f"🎯 NUEVO DIAGNÓSTICO 😎 {analisis['diagnosis']['title']}")
+                    st.subheader(f"🎯 {analisis['diagnosis']['title']}")
                     st.metric("Puntaje Global", f"{analisis['puntaje_global']}/100")
-
-                    # Peso del caso
                     pesos_iconos = {"Ligero": "🪶", "Medio": "🏋️", "Pesado": "🏋️‍♂️", "Legendario": "🏆"}
                     peso = analisis['diagnosis'].get('peso', 'Medio')
                     icono = pesos_iconos.get(peso, "🏋️")
                     st.markdown(f"**{icono} Peso del caso:** {peso} {analisis['diagnosis'].get('emoji', '')}")
-
-                    # Descripción
                     st.write(analisis['diagnosis']['description'])
-
-                    # Electrocardiograma social (como en consola)
                     pulse = analisis.get('pulse_line', [])
                     if pulse:
                         barra = "".join(["█" if p > 50 else "▒" if p > 25 else "░" for p in pulse])
                         st.subheader("📈 Electrocardiograma Social")
                         st.code(barra, language=None)
                         st.caption(f"Inicio: {pulse[0]} → Final: {pulse[-1]}")
-
-                    # Rutina de entrenamiento
                     routine = analisis.get('routine', {})
                     if routine:
                         st.subheader("🏋️ Rutina de entrenamiento")
@@ -302,11 +373,14 @@ if modo == "📊 Monitor de Chats":
                             st.error(f"❌ Evita: {routine.get('que_evitar', '')}")
                         with col2:
                             st.success(f"✅ Haz: {routine.get('que_hacer', '')}")
-
-                        # Opciones de respuesta
                         st.subheader("💬 Opciones de respuesta")
+                        emojis_monitor = {"humor": "😂", "curiosidad": "❓", "cumplido": "🎯", "propuesta": "🧲",
+                                          "general": "💬"}
                         for i, r in enumerate(routine.get('respuestas', []), 1):
-                            with st.expander(f"{i}. [{r.get('estilo', 'General')}] {r.get('texto', '')}"):
+                            estilo = r.get('estilo', 'General')
+                            clave = normalizar_clave(estilo)
+                            emoji = emojis_monitor.get(clave, "💬")
+                            with st.expander(f"{i}. {emoji} [{estilo}] {r.get('texto', '')}"):
                                 st.write(f"💡 {r.get('porque', '')}")
             else:
                 st.warning("Corrige la extracción antes de continuar.")
@@ -322,10 +396,11 @@ if modo == "🧊 Icebreaker":
         st.session_state.descripcion_perfil = None
         st.session_state.perfil_analizado = False
 
-    uploaded = st.file_uploader("Selecciona una captura de perfil (Instagram, Tinder...)", type=["png","jpg","jpeg"], key="icebreaker_upload")
+    uploaded = st.file_uploader("Selecciona una captura de perfil (Instagram, Tinder...)", type=["png", "jpg", "jpeg"],
+                                key="icebreaker_upload")
     if uploaded:
         image = Image.open(uploaded)
-        st.image(image, caption="Vista previa del perfil", width=400)
+        st.image(image, caption="Vista previa del perfil", width=300)
         if st.button("👁️ Analizar perfil"):
             with st.spinner("Analizando perfil con IA multimodal..."):
                 desc = extraer_perfil_qwen(image)
@@ -335,17 +410,55 @@ if modo == "🧊 Icebreaker":
         if st.session_state.perfil_analizado:
             st.success("✅ Perfil analizado")
             st.subheader("📄 Descripción extraída")
-            st.write(st.session_state.descripcion_perfil[:500] + "..." if len(st.session_state.descripcion_perfil) > 500 else st.session_state.descripcion_perfil)
+            st.info(st.session_state.descripcion_perfil)
 
-            contexto = st.text_area("Datos extra (opcional)", placeholder="¿Hobbies, trabajo, algo que sepas de ella?", key="ice_contexto")
-            temp = st.slider("Creatividad", 0.7, 1.3, 0.95, 0.05)
+            contexto = st.text_area("Datos extra (opcional, pero muy importantes)",
+                                    placeholder="¿Hobbies, trabajo, algo que sepas de ella? Esto pesa más que la imagen.",
+                                    key="ice_contexto")
+            temp = st.slider("Creatividad", 0.7, 1.5, 0.95, 0.05)
 
             if st.button("🧊 Generar líneas de apertura"):
                 with st.spinner("Generando icebreakers..."):
                     ice = generar_icebreakers(st.session_state.descripcion_perfil, contexto, temp)
-                st.subheader(f"👤 Vibe: {ice.get('perfil_resumen', '')}")
+
+                st.subheader(f"👤 {ice.get('perfil_resumen', '')}")
+
+                emojis = {
+                    "divertida": "😂",
+                    "observacion_encantadora": "✨",
+                    "observacion encantadora": "✨",
+                    "observación encantadora": "✨",
+                    "pregunta_con_gancho": "❓",
+                    "pregunta con gancho": "❓",
+                    "cumplido_no_fisico": "💘",
+                    "cumplido no físico": "💘",
+                    "cumplido no fisico": "💘",
+                    "wildcard": "🃏",
+                    "wildcard comodín": "🃏",
+                    "wildcard comodin": "🃏",
+                    "comodin": "🃏",
+                    "comodín": "🃏"
+                }
+
                 for i, linea in enumerate(ice.get('lineas', []), 1):
-                    emojis = {"divertida":"😂","observacion_encantadora":"✨","pregunta_con_gancho":"❓","cumplido_no_fisico":"🎯","wildcard":"🧲"}
-                    emoji = emojis.get(linea['tipo'], "💬")
-                    with st.expander(f"{i}. {emoji} [{linea['tipo'].upper().replace('_',' ')}] {linea['texto']}"):
-                        st.write(f"💡 {linea['porque']}")
+                    tipo_original = linea.get('tipo', '').strip()
+                    clave_normalizada = tipo_original.lower()
+                    clave_normalizada = re.sub(r'[^a-záéíóúñü ]', ' ', clave_normalizada)
+                    clave_normalizada = re.sub(r'\s+', ' ', clave_normalizada).strip()
+
+                    emoji = emojis.get(clave_normalizada, None)
+                    if emoji is None:
+                        emoji = "💬"
+                        st.caption(f"⚠️ No se encontró emoji para: '{tipo_original}' (clave: '{clave_normalizada}')")
+
+                    tipo_formateado = tipo_original.replace('_', ' ').title()
+
+                    with st.container():
+                        st.markdown(f"""
+                        <div class="icebreaker-card">
+                            <h4>{emoji} {tipo_formateado}</h4>
+                            <p style="font-size:16px; margin:10px 0;">"{linea['texto']}"</p>
+                            <p style="color:#666; font-size:13px;">💡 {linea['porque']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        copy_button(linea['texto'])
