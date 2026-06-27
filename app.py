@@ -21,7 +21,7 @@ client_deepseek = OpenAI(
 )
 
 # ------------------------------------------------------------
-# PROMPTS DEL MONITOR
+# PROMPTS DEL MONITOR (RESPUESTAS MÁS PRECISAS Y NATURALES)
 # ------------------------------------------------------------
 MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador estrella de Gym Social. Analizas conversaciones y entregas un diagnóstico táctico-psicológico con el tono directo, motivador y coqueto de un coach de gimnasio. Hablas como un hermano mayor que entrena contigo.
 
@@ -31,25 +31,24 @@ MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador estrella de Gym Soci
 - Si el usuario añade un contexto adicional, úsalo para personalizar tu análisis y tus respuestas.
 
 ## TU ANÁLISIS DEBE INCLUIR (formato JSON):
-1. **pulse_line**: Array de 10 números (1-100) que muestren el nivel de interés de "ELLA". 1 = nulo, 100 = muy alto.
-2. **diagnosis**: Objeto con:
+1. **diagnosis**: Objeto con:
    - "title": Título breve y descriptivo.
-   - "description": Explicación concisa (máximo 3 frases).
+   - "description": Explicación concisa (máximo 2 frases).
    - "peso": "Ligero", "Medio", "Pesado" o "Legendario".
    - "emoji": Emoji representativo.
-3. **routine**: Objeto con:
+2. **routine**: Objeto con:
    - "que_evitar": Error detectado en "TÚ".
    - "que_hacer": Técnica correcta.
-   - "respuestas": Array con 3 opciones (estilo, texto, porque).
-4. **puntaje_global**: 1-100.
+   - "respuestas": Array con 4 opciones (estilo, texto, porque). Cada respuesta debe ser CORTA (1-2 frases), **específica para la situación actual** y con un toque de seducción elegante. Evita lugares comunes como "hola, ¿cómo estás?" o frases de conquistador barato. Cada sugerencia debe sonar natural, inteligente y alineada con el tono real de la conversación.
+3. **puntaje_global**: 1-100.
 
 ## REGLAS INQUEBRANTABLES:
 - NUNCA manipulación, negging o desinterés fingido.
 - Explica el "por qué" psicológico.
 - Tono cálido, motivador y con humor ligero. Español latino neutro.
-- Las 3 respuestas deben ser para "TÚ".
-
-Devuelve SOLO un JSON válido, sin markdown."""
+- Las 4 respuestas deben ser para "TÚ", breves y magnéticas.
+- Evita frases genéricas o cliché. Asegúrate de que cada respuesta esté basada en los mensajes reales y se sienta personalizada, no como un copia-y-pega.
+- No inventes situaciones ni seas demasiado excéntrico; mantén los pies en la tierra."""
 
 # ------------------------------------------------------------
 # PROMPT DEL ICEBREAKER
@@ -106,7 +105,7 @@ def normalizar_clave(texto):
 
 
 # ------------------------------------------------------------
-# FUNCIONES DEL MONITOR
+# FUNCIONES DEL MONITOR (CON BLINDAJE JSON)
 # ------------------------------------------------------------
 def extraer_chat_qwen(image: Image.Image):
     image_data = resize_image_for_api(image)
@@ -165,22 +164,38 @@ def eliminar_replies(conversacion):
     return resultado
 
 
-def analizar_con_deepseek(conversacion, contexto="", temperatura=0.8):
+def analizar_con_deepseek(conversacion, contexto="", temperatura=0.9):
     conversacion_texto = json.dumps(conversacion, ensure_ascii=False, indent=2)
     mensaje_usuario = f"Analiza esta conversación:\n\n{conversacion_texto}"
     if contexto: mensaje_usuario += f"\n\nContexto adicional del usuario: {contexto}"
-    response = client_deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "system", "content": MONITOR_SYSTEM_PROMPT}, {"role": "user", "content": mensaje_usuario}],
-        temperature=temperatura, max_tokens=2500
-    )
-    resultado = response.choices[0].message.content.strip()
-    if resultado.startswith("```json"):
-        resultado = resultado[7:]
-    elif resultado.startswith("```"):
-        resultado = resultado[3:]
-    if resultado.endswith("```"): resultado = resultado[:-3]
-    return json.loads(resultado)
+
+    for intento in range(2):
+        response = client_deepseek.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "system", "content": MONITOR_SYSTEM_PROMPT},
+                      {"role": "user", "content": mensaje_usuario}],
+            temperature=temperatura if intento == 0 else 0,
+            max_tokens=2500
+        )
+        resultado = response.choices[0].message.content.strip()
+        if resultado.startswith("```json"):
+            resultado = resultado[7:]
+        elif resultado.startswith("```"):
+            resultado = resultado[3:]
+        if resultado.endswith("```"): resultado = resultado[:-3]
+
+        try:
+            return json.loads(resultado)
+        except json.JSONDecodeError:
+            ultimo_cierre = resultado.rfind('}')
+            if ultimo_cierre != -1:
+                try:
+                    return json.loads(resultado[:ultimo_cierre + 1])
+                except json.JSONDecodeError:
+                    pass
+            if intento == 1:
+                st.error("❌ El Monitor recibió un formato inválido dos veces. Por favor, inténtalo de nuevo.")
+                return None
 
 
 # ------------------------------------------------------------
@@ -303,7 +318,7 @@ st.sidebar.title("🏋️ Gym Social")
 modo = st.sidebar.radio("Elige una herramienta:", ["📊 Monitor de Chats", "🧊 Icebreaker"])
 
 # ------------------------------------------------------------
-# MODO MONITOR
+# MODO MONITOR (SIN BARRA DE CREATIVIDAD, TEMPERATURA AUTOMÁTICA)
 # ------------------------------------------------------------
 if modo == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
@@ -316,7 +331,7 @@ if modo == "📊 Monitor de Chats":
     if 'diagnostico_actual' not in st.session_state:
         st.session_state.diagnostico_actual = None
     if 'temp_actual' not in st.session_state:
-        st.session_state.temp_actual = 0.8
+        st.session_state.temp_actual = 0.9
 
     uploaded = st.file_uploader("Selecciona una captura de WhatsApp/Instagram", type=["png", "jpg", "jpeg"],
                                 key="monitor_upload")
@@ -330,7 +345,7 @@ if modo == "📊 Monitor de Chats":
                 st.session_state.conv_monitor = conversacion
                 st.session_state.extraccion_monitor = True
                 st.session_state.diagnostico_actual = None
-                st.session_state.temp_actual = 0.8
+                st.session_state.temp_actual = 0.9
 
         if st.session_state.extraccion_monitor:
             conv = st.session_state.conv_monitor
@@ -342,13 +357,21 @@ if modo == "📊 Monitor de Chats":
 
             if st.checkbox("¿La extracción es correcta?"):
                 contexto = st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...")
+
+                # Sin slider de creatividad, usamos temperatura automática
                 boton_texto = "🔄 Obtener otro diagnóstico" if st.session_state.diagnostico_actual else "🧠 Ejecutar diagnóstico"
                 if st.button(boton_texto):
                     if st.session_state.diagnostico_actual:
+                        # Incremento automático de temperatura
                         st.session_state.temp_actual = min(st.session_state.temp_actual + 0.05, 1.2)
+                    # Si es la primera vez, temp_actual ya es 0.8
+
                     with st.spinner(f"Analizando..."):
                         analisis = analizar_con_deepseek(conv, contexto, temperatura=st.session_state.temp_actual)
-                        st.session_state.diagnostico_actual = analisis
+                        if analisis is None:
+                            st.warning("No se pudo generar el diagnóstico. Inténtalo de nuevo.")
+                        else:
+                            st.session_state.diagnostico_actual = analisis
 
                 if st.session_state.diagnostico_actual:
                     analisis = st.session_state.diagnostico_actual
@@ -359,12 +382,7 @@ if modo == "📊 Monitor de Chats":
                     icono = pesos_iconos.get(peso, "🏋️")
                     st.markdown(f"**{icono} Peso del caso:** {peso} {analisis['diagnosis'].get('emoji', '')}")
                     st.write(analisis['diagnosis']['description'])
-                    pulse = analisis.get('pulse_line', [])
-                    if pulse:
-                        barra = "".join(["█" if p > 50 else "▒" if p > 25 else "░" for p in pulse])
-                        st.subheader("📈 Electrocardiograma Social")
-                        st.code(barra, language=None)
-                        st.caption(f"Inicio: {pulse[0]} → Final: {pulse[-1]}")
+
                     routine = analisis.get('routine', {})
                     if routine:
                         st.subheader("🏋️ Rutina de entrenamiento")
@@ -373,6 +391,7 @@ if modo == "📊 Monitor de Chats":
                             st.error(f"❌ Evita: {routine.get('que_evitar', '')}")
                         with col2:
                             st.success(f"✅ Haz: {routine.get('que_hacer', '')}")
+
                         st.subheader("💬 Opciones de respuesta")
                         emojis_monitor = {"humor": "😂", "curiosidad": "❓", "cumplido": "🎯", "propuesta": "🧲",
                                           "general": "💬"}
@@ -382,6 +401,7 @@ if modo == "📊 Monitor de Chats":
                             emoji = emojis_monitor.get(clave, "💬")
                             with st.expander(f"{i}. {emoji} [{estilo}] {r.get('texto', '')}"):
                                 st.write(f"💡 {r.get('porque', '')}")
+                                copy_button(r.get('texto', ''))
             else:
                 st.warning("Corrige la extracción antes de continuar.")
 
