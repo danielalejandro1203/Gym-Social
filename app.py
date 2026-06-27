@@ -164,7 +164,7 @@ def eliminar_replies(conversacion):
     return resultado
 
 
-def analizar_con_deepseek(conversacion, contexto="", temperatura=0.9):
+def analizar_con_deepseek(conversacion, contexto="", temperatura=0.8):
     conversacion_texto = json.dumps(conversacion, ensure_ascii=False, indent=2)
     mensaje_usuario = f"Analiza esta conversación:\n\n{conversacion_texto}"
     if contexto: mensaje_usuario += f"\n\nContexto adicional del usuario: {contexto}"
@@ -291,7 +291,7 @@ def copy_button(text):
 
 
 # ------------------------------------------------------------
-# INTERFAZ PRINCIPAL CON NAVEGACIÓN LATERAL
+# INTERFAZ PRINCIPAL CON NAVEGACIÓN JERÁRQUICA
 # ------------------------------------------------------------
 st.set_page_config(page_title="Gym Social", page_icon="🏋️", layout="wide")
 
@@ -315,12 +315,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.sidebar.title("🏋️ Gym Social")
-modo = st.sidebar.radio("Elige una herramienta:", ["📊 Monitor de Chats", "🧊 Icebreaker"])
+
+# Menú jerárquico
+pilares_disponibles = {
+    "Pilar 1: El Monitor": ["📊 Monitor de Chats", "🧊 Icebreaker"],
+    "Pilar 2: El Sparring": ["🚧 Próximamente"],
+    "Pilar 3: El Espejo": ["🚧 Próximamente"],
+    "Pilar 4: La Arena": ["🚧 Próximamente"]
+}
+
+pilar_seleccionado = st.sidebar.selectbox("Selecciona un pilar:", list(pilares_disponibles.keys()))
+herramientas = pilares_disponibles[pilar_seleccionado]
+
+if len(herramientas) > 1 or herramientas[0] != "🚧 Próximamente":
+    herramienta_seleccionada = st.sidebar.selectbox("Herramienta:", herramientas)
+else:
+    herramienta_seleccionada = None
+
+# Si el pilar no tiene herramientas disponibles, mostrar mensaje
+if herramienta_seleccionada is None or herramienta_seleccionada == "🚧 Próximamente":
+    st.title(f"🏋️ Gym Social – {pilar_seleccionado}")
+    st.info("🚧 Este pilar estará disponible próximamente. ¡Estamos trabajando para ti!")
+    st.stop()
 
 # ------------------------------------------------------------
-# MODO MONITOR (SIN BARRA DE CREATIVIDAD, TEMPERATURA AUTOMÁTICA)
+# MODO MONITOR
 # ------------------------------------------------------------
-if modo == "📊 Monitor de Chats":
+if herramienta_seleccionada == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
     st.caption("Sube una captura de chat y recibe tu diagnóstico al instante")
 
@@ -358,14 +379,10 @@ if modo == "📊 Monitor de Chats":
             if st.checkbox("¿La extracción es correcta?"):
                 contexto = st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...")
 
-                # Sin slider de creatividad, usamos temperatura automática
                 boton_texto = "🔄 Obtener otro diagnóstico" if st.session_state.diagnostico_actual else "🧠 Ejecutar diagnóstico"
                 if st.button(boton_texto):
                     if st.session_state.diagnostico_actual:
-                        # Incremento automático de temperatura
                         st.session_state.temp_actual = min(st.session_state.temp_actual + 0.05, 1.2)
-                    # Si es la primera vez, temp_actual ya es 0.8
-
                     with st.spinner(f"Analizando..."):
                         analisis = analizar_con_deepseek(conv, contexto, temperatura=st.session_state.temp_actual)
                         if analisis is None:
@@ -408,7 +425,7 @@ if modo == "📊 Monitor de Chats":
 # ------------------------------------------------------------
 # MODO ICEBREAKER
 # ------------------------------------------------------------
-if modo == "🧊 Icebreaker":
+elif herramienta_seleccionada == "🧊 Icebreaker":
     st.title("🧊 Gym Social – El Icebreaker")
     st.caption("Sube una captura de un perfil y recibe líneas de apertura irresistibles")
 
