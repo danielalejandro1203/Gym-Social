@@ -21,7 +21,7 @@ client_deepseek = OpenAI(
 )
 
 # ------------------------------------------------------------
-# PROMPTS DEL MONITOR (MÁS HUMANO Y NATURAL)
+# PROMPTS DEL MONITOR
 # ------------------------------------------------------------
 MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador de Gym Social. Ayudas a hombres a mejorar sus conversaciones con un tono cercano, cálido y natural, como un amigo que te da un consejo mientras entrenan.
 
@@ -99,6 +99,56 @@ Generar EXACTAMENTE 5 líneas de apertura. Cada línea debe ser UNA SOLA FRASE, 
   ]
 }
 Devuelve SOLO el JSON. Sin texto adicional."""
+
+# ------------------------------------------------------------
+# PERSONALIDADES DEL SPARRING
+# ------------------------------------------------------------
+SPARRING_PERSONALITIES = {
+    "Cortante": {
+        "descripcion": "Eres una chica cortante. Responde con monosílabos, no hagas preguntas y muestra desinterés. No tomes la iniciativa, solo reacciona a lo que te digan.",
+        "dificultad": "Difícil"
+    },
+    "Divertida": {
+        "descripcion": "Eres una chica divertida e ingeniosa. Responde con humor y chispa, pero espera a que te hablen primero.",
+        "dificultad": "Media"
+    },
+    "Molesta": {
+        "descripcion": "Estás molesta con la persona que te habla. Responde con enfado y distancia. No empieces la conversación.",
+        "dificultad": "Difícil"
+    },
+    "Tímida": {
+        "descripcion": "Eres una chica muy tímida. Responde corto y con vergüenza. No iniciarás temas por tu cuenta.",
+        "dificultad": "Fácil"
+    },
+    "Con Novio": {
+        "descripcion": "Eres una chica que tiene novio. Sé amable pero deja claro que estás comprometida. Si el usuario intenta ligar, recuérdale que tienes pareja.",
+        "dificultad": "Experto"
+    }
+}
+
+# ------------------------------------------------------------
+# PROMPT DEL COACH (AHORA CON 3 SUGERENCIAS)
+# ------------------------------------------------------------
+COACH_SYSTEM_PROMPT = """Eres el 'Coach' interno de Gym Social. Evalúas los mensajes que un usuario envía durante una práctica de sparring y das sugerencias concretas.
+
+## ELEMENTOS A EVALUAR (del 1 al 10 cada uno):
+- **interes**: ¿Muestra curiosidad genuina por la otra persona?
+- **preguntas**: ¿Hace preguntas abiertas que invitan a seguir hablando?
+- **tono**: ¿Es equilibrado, sin ser demasiado frío ni demasiado intenso?
+- **creatividad**: ¿Tiene chispa o es genérico?
+
+## FORMATO DE SALIDA (JSON):
+{
+  "puntuacion": 7,
+  "consejo": "Consejo breve y en tono de entrenador. Ej: 'Buena pregunta, pero podrías añadir un toque de humor.'",
+  "sugerencias": [
+    "Primera sugerencia breve",
+    "Segunda sugerencia breve",
+    "Tercera sugerencia breve"
+  ]
+}
+
+Las sugerencias deben ser alternativas reales que el usuario podría haber enviado. Adáptalas a la personalidad de la IA con la que está hablando y al momento de la conversación. Cada sugerencia debe ser una frase corta, lista para usar. Sé motivador y evita ser demasiado crítico."""
 
 
 # ------------------------------------------------------------
@@ -274,6 +324,80 @@ def generar_icebreakers(descripcion_perfil, contexto_extra="", temperatura=0.95)
 
 
 # ------------------------------------------------------------
+# FUNCIONES DEL SPARRING
+# ------------------------------------------------------------
+def evaluar_mensaje(historial, mensaje_usuario):
+    """Evalúa el mensaje del usuario y devuelve consejo y 3 sugerencias."""
+    context = "\n".join(
+        [f"{'TÚ' if m['role'] == 'user' else 'IA'}: {m['content']}" for m in historial if m['role'] in ['user', 'ia']][
+            -5:])
+    response = client_deepseek.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": COACH_SYSTEM_PROMPT},
+            {"role": "user",
+             "content": f"Historial reciente:\n{context}\n\nMensaje del usuario a evaluar: {mensaje_usuario}"}
+        ],
+        temperature=0.5,
+        max_tokens=400
+    )
+    resultado = response.choices[0].message.content.strip()
+    if resultado.startswith("```json"):
+        resultado = resultado[7:]
+    elif resultado.startswith("```"):
+        resultado = resultado[3:]
+    if resultado.endswith("```"): resultado = resultado[:-3]
+    return json.loads(resultado)
+
+
+def responder_ia(historial, personalidad, temperatura=0.8):
+    """Genera la respuesta de la IA ignorando coach y sugerencias."""
+    system_msg = f"Eres una chica con la siguiente personalidad: {SPARRING_PERSONALITIES[personalidad]['descripcion']}. Responde en español latino neutro, como en un chat real."
+    messages = [{"role": "system", "content": system_msg}]
+    for m in historial:
+        if m['role'] == 'user':
+            messages.append({"role": "user", "content": m['content']})
+        elif m['role'] == 'ia':
+            messages.append({"role": "assistant", "content": m['content']})
+
+    response = client_deepseek.chat.completions.create(
+        model="deepseek-chat",
+        messages=messages,
+        temperature=temperatura,
+        max_tokens=300
+    )
+    return response.choices[0].message.content.strip()
+
+
+def resumen_final(historial, puntuaciones):
+    """Resumen con más información pero sin ser extenso."""
+    dialogo = "\n".join(
+        [f"{'TÚ' if m['role'] == 'user' else 'IA'}: {m['content']}" for m in historial if m['role'] in ['user', 'ia']])
+    avg_score = sum(puntuaciones) / len(puntuaciones) if puntuaciones else 0
+
+    prompt = f"""Analiza esta conversación de práctica y proporciona un resumen breve pero útil:
+- 2 cosas que hiciste bien.
+- 2 aspectos concretos a mejorar (con ejemplos de cómo podrías haberlo hecho mejor).
+- 1 consejo final práctico para tu próxima conversación real.
+
+Sé alentador y cercano. Usa un máximo de 6 frases.
+
+Conversación:
+{dialogo}
+
+Puntuación media: {avg_score:.1f}/10"""
+    response = client_deepseek.chat.completions.create(
+        model="deepseek-chat",
+        messages=[{"role": "system",
+                   "content": "Eres un entrenador de Gym Social. Sé constructivo y breve, pero da detalles útiles."},
+                  {"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=400
+    )
+    return response.choices[0].message.content.strip()
+
+
+# ------------------------------------------------------------
 # BOTÓN DE COPIAR
 # ------------------------------------------------------------
 def copy_button(text):
@@ -309,7 +433,7 @@ def copy_button(text):
 
 
 # ------------------------------------------------------------
-# INTERFAZ PRINCIPAL CON NAVEGACIÓN JERÁRQUICA
+# INTERFAZ PRINCIPAL
 # ------------------------------------------------------------
 st.set_page_config(page_title="Gym Social", page_icon="🏋️", layout="wide")
 
@@ -328,6 +452,38 @@ st.markdown("""
         margin-bottom: 10px;
         background-color: #fafafa;
     }
+    .user-msg {
+        background-color: #DCF8C6;
+        padding: 10px;
+        border-radius: 10px;
+        margin: 5px 0;
+        text-align: right;
+    }
+    .ia-msg {
+        background-color: #E8E8E8;
+        padding: 10px;
+        border-radius: 10px;
+        margin: 5px 0;
+        text-align: left;
+    }
+    .coach-msg {
+        background-color: #FFF3CD;
+        border-left: 4px solid #FFC107;
+        padding: 8px;
+        margin: 5px 0;
+        font-size: 0.9em;
+        color: #856404;
+        border-radius: 5px;
+    }
+    .sugerencia-msg {
+        background-color: #D6EAF8;
+        border-left: 4px solid #2980B9;
+        padding: 8px;
+        margin: 5px 0;
+        font-size: 0.9em;
+        color: #154360;
+        border-radius: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -335,7 +491,7 @@ st.sidebar.title("🏋️ Gym Social")
 
 pilares_disponibles = {
     "Pilar 1: El Monitor": ["📊 Monitor de Chats", "🧊 Icebreaker"],
-    "Pilar 2: El Sparring": ["🚧 Próximamente"],
+    "Pilar 2: El Sparring": ["🥊 Entrenamiento"],
     "Pilar 3: El Espejo": ["🚧 Próximamente"],
     "Pilar 4: La Arena": ["🚧 Próximamente"]
 }
@@ -354,7 +510,7 @@ if herramienta_seleccionada is None or herramienta_seleccionada == "🚧 Próxim
     st.stop()
 
 # ------------------------------------------------------------
-# MODO MONITOR (CON BOTÓN GUARDAR CONTEXTO)
+# MODO MONITOR
 # ------------------------------------------------------------
 if herramienta_seleccionada == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
@@ -535,3 +691,89 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
                         </div>
                         """, unsafe_allow_html=True)
                         copy_button(linea['texto'])
+
+# ------------------------------------------------------------
+# MODO SPARRING (MEJORADO: 3 SUGERENCIAS, ORDEN CORRECTO, RESUMEN MÁS COMPLETO)
+# ------------------------------------------------------------
+elif herramienta_seleccionada == "🥊 Entrenamiento":
+    st.title("🥊 Gym Social – El Sparring")
+    st.caption("Practica tus habilidades con una IA que simula distintas personalidades")
+
+    if 'historial' not in st.session_state:
+        st.session_state.historial = []
+    if 'puntuaciones' not in st.session_state:
+        st.session_state.puntuaciones = []
+    if 'sparring_activo' not in st.session_state:
+        st.session_state.sparring_activo = False
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        personalidad = st.selectbox("Elige una personalidad para practicar:", list(SPARRING_PERSONALITIES.keys()))
+    with col2:
+        dificultad = st.radio("Dificultad", ["Fácil", "Medio", "Difícil"], index=1)
+        temp_map = {"Fácil": 0.9, "Medio": 0.7, "Difícil": 0.5}
+        temperatura = temp_map[dificultad]
+
+    if st.button("Iniciar práctica"):
+        st.session_state.historial = []
+        st.session_state.puntuaciones = []
+        st.session_state.sparring_activo = True
+        st.rerun()
+
+    if st.session_state.sparring_activo:
+        # Mostrar historial
+        for m in st.session_state.historial:
+            if m['role'] == 'user':
+                st.markdown(f"<div class='user-msg'>TÚ<br>{m['content']}</div>", unsafe_allow_html=True)
+            elif m['role'] == 'ia':
+                st.markdown(f"<div class='ia-msg'>IA ({personalidad})<br>{m['content']}</div>", unsafe_allow_html=True)
+            elif m['role'] == 'coach':
+                st.markdown(f"<div class='coach-msg'>🧑‍🏫 Coach: {m['content']}</div>", unsafe_allow_html=True)
+            elif m['role'] == 'sugerencia':
+                st.markdown(f"<div class='sugerencia-msg'>💡 {m['content']}</div>", unsafe_allow_html=True)
+
+        # Campo de entrada
+        with st.form("sparring_form", clear_on_submit=True):
+            user_input = st.text_area("Tu mensaje:", key="sparring_input")
+            if st.form_submit_button("Enviar"):
+                if user_input:
+                    # 1. Evaluar mensaje (obtiene sugerencias)
+                    with st.spinner("Coach evaluando..."):
+                        evaluacion = evaluar_mensaje(st.session_state.historial, user_input)
+                        punt = evaluacion['puntuacion']
+                        consejo = evaluacion['consejo']
+                        sugerencias = evaluacion.get('sugerencias', [])
+                        st.session_state.puntuaciones.append(punt)
+
+                    # 2. Añadir mensaje del usuario
+                    st.session_state.historial.append({"role": "user", "content": user_input})
+
+                    # 3. Respuesta de la IA
+                    with st.spinner(f"{personalidad} está escribiendo..."):
+                        respuesta = responder_ia(st.session_state.historial, personalidad, temperatura=temperatura)
+                        st.session_state.historial.append({"role": "ia", "content": respuesta})
+
+                    # 4. Mensaje del coach (después de IA)
+                    st.session_state.historial.append(
+                        {"role": "coach", "content": f"{consejo} (Puntuación: {punt}/10)"})
+
+                    # 5. Sugerencias (una sola entrada con las 3 frases)
+                    if sugerencias:
+                        # Combinamos las sugerencias en un solo mensaje con viñetas
+                        sugerencia_texto = "\n".join([f"• {s}" for s in sugerencias])
+                        st.session_state.historial.append({"role": "sugerencia", "content": sugerencia_texto})
+
+                    st.rerun()
+
+        if st.button("Terminar práctica"):
+            if st.session_state.puntuaciones:
+                promedio = sum(st.session_state.puntuaciones) / len(st.session_state.puntuaciones)
+                st.success(f"🏁 Práctica terminada. Puntuación promedio: {promedio:.1f}/10")
+                with st.spinner("Generando resumen..."):
+                    resumen = resumen_final(st.session_state.historial, st.session_state.puntuaciones)
+                st.subheader("📋 Resumen de la sesión")
+                st.write(resumen)
+                st.balloons()
+            st.session_state.sparring_activo = False
+            st.session_state.historial = []
+            st.session_state.puntuaciones = []
