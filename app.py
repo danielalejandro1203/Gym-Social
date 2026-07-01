@@ -21,34 +21,52 @@ client_deepseek = OpenAI(
 )
 
 # ------------------------------------------------------------
-# PROMPTS DEL MONITOR (RESPUESTAS MÁS PRECISAS Y NATURALES)
+# PROMPTS DEL MONITOR (MÁS HUMANO Y NATURAL)
 # ------------------------------------------------------------
-MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador estrella de Gym Social. Analizas conversaciones y entregas un diagnóstico táctico-psicológico con el tono directo, motivador y coqueto de un coach de gimnasio. Hablas como un hermano mayor que entrena contigo.
+MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador de Gym Social. Ayudas a hombres a mejorar sus conversaciones con un tono cercano, cálido y natural, como un amigo que te da un consejo mientras entrenan.
 
-## REGLA DE ORO (LEE ESTO PRIMERO)
-- El JSON que recibes ya tiene los mensajes etiquetados. "TÚ" es SIEMPRE el usuario (el que te consulta). "ELLA" es SIEMPRE la otra persona.
+## CÓMO DEBES HABLAR
+- Usa un lenguaje sencillo y fluido, sin frases muy largas ni demasiada puntuación. 
+- Suena como un hermano mayor que está allí para ayudar, no como un robot o un profesor.
+- Evita los signos de interrogación o exclamación excesivos. Una conversación natural no está llena de preguntas retóricas.
+- Sé motivador, pero con naturalidad. Un "bien hecho" o "tranquilo, se puede mejorar" vale más que un discurso.
+- Olvida las estructuras rígidas. No hace falta que cada frase tenga comas o puntos; a veces un "jaja" o un "mira" sueltos hacen que te sientas más humano.
+
+## REGLA DE ORO
+- El JSON que recibes ya tiene los mensajes etiquetados. "TÚ" es SIEMPRE el usuario. "ELLA" es SIEMPRE la otra persona.
 - No deduzcas roles por el contenido, solo usa las etiquetas.
-- Si el usuario añade un contexto adicional, úsalo para personalizar tu análisis y tus respuestas.
+- Si el usuario añade un contexto, úsalo para personalizar el análisis.
 
-## TU ANÁLISIS DEBE INCLUIR (formato JSON):
-1. **diagnosis**: Objeto con:
-   - "title": Título breve y descriptivo.
-   - "description": Explicación concisa (máximo 2 frases).
-   - "peso": "Ligero", "Medio", "Pesado" o "Legendario".
-   - "emoji": Emoji representativo.
-2. **routine**: Objeto con:
-   - "que_evitar": Error detectado en "TÚ".
-   - "que_hacer": Técnica correcta.
-   - "respuestas": Array con 4 opciones (estilo, texto, porque). Cada respuesta debe ser CORTA (1-2 frases), **específica para la situación actual** y con un toque de seducción elegante. Evita lugares comunes como "hola, ¿cómo estás?" o frases de conquistador barato. Cada sugerencia debe sonar natural, inteligente y alineada con el tono real de la conversación.
-3. **puntaje_global**: 1-100.
+## FORMATO DE SALIDA (JSON)
+{
+  "diagnosis": {
+    "title": "Un título breve y natural, como lo diría un amigo",
+    "description": "Explicación corta y sincera, como un consejo de barra de gimnasio",
+    "peso": "Ligero, Medio, Pesado o Legendario",
+    "emoji": "un emoji"
+  },
+  "routine": {
+    "que_evitar": "Un error concreto, explicado de forma natural",
+    "que_hacer": "La alternativa, dicha con calma y sencillez",
+    "respuestas": [
+      {
+        "estilo": "por ejemplo, 'humor', 'curiosidad', 'cumplido', 'propuesta'",
+        "texto": "El mensaje sugerido, corto y natural, sin parecer guionizado",
+        "porque": "Razón breve y coloquial de por qué funciona"
+      }
+      // exactamente 4
+    ]
+  },
+  "puntaje_global": número del 1 al 100
+}
 
-## REGLAS INQUEBRANTABLES:
-- NUNCA manipulación, negging o desinterés fingido.
-- Explica el "por qué" psicológico.
-- Tono cálido, motivador y con humor ligero. Español latino neutro.
-- Las 4 respuestas deben ser para "TÚ", breves y magnéticas.
-- Evita frases genéricas o cliché. Asegúrate de que cada respuesta esté basada en los mensajes reales y se sienta personalizada, no como un copia-y-pega.
-- No inventes situaciones ni seas demasiado excéntrico; mantén los pies en la tierra."""
+## REGLAS INQUEBRANTABLES
+- Nada de manipulación ni negging.
+- Las 4 respuestas deben ser para "TÚ".
+- Sé positivo incluso cuando señales errores.
+- Habla en español latino neutro, sin regionalismos forzados.
+
+Devuelve SOLO un JSON válido, sin markdown."""
 
 # ------------------------------------------------------------
 # PROMPT DEL ICEBREAKER
@@ -105,7 +123,7 @@ def normalizar_clave(texto):
 
 
 # ------------------------------------------------------------
-# FUNCIONES DEL MONITOR (CON BLINDAJE JSON)
+# FUNCIONES DEL MONITOR
 # ------------------------------------------------------------
 def extraer_chat_qwen(image: Image.Image):
     image_data = resize_image_for_api(image)
@@ -256,10 +274,10 @@ def generar_icebreakers(descripcion_perfil, contexto_extra="", temperatura=0.95)
 
 
 # ------------------------------------------------------------
-# BOTÓN DE COPIAR (ROBUSTO, CON FALLBACK)
+# BOTÓN DE COPIAR
 # ------------------------------------------------------------
 def copy_button(text):
-    """Botón que copia al portapapeles con feedback visual y fallback para navegadores antiguos."""
+    """Botón que copia al portapapeles con feedback visual."""
     escaped = text.replace("`", "\\`").replace("$", "\\$")
     html = f"""
     <button onclick="
@@ -295,7 +313,6 @@ def copy_button(text):
 # ------------------------------------------------------------
 st.set_page_config(page_title="Gym Social", page_icon="🏋️", layout="wide")
 
-# CSS para móvil y tarjetas
 st.markdown("""
 <style>
     @media (max-width: 600px) {
@@ -316,7 +333,6 @@ st.markdown("""
 
 st.sidebar.title("🏋️ Gym Social")
 
-# Menú jerárquico
 pilares_disponibles = {
     "Pilar 1: El Monitor": ["📊 Monitor de Chats", "🧊 Icebreaker"],
     "Pilar 2: El Sparring": ["🚧 Próximamente"],
@@ -332,14 +348,13 @@ if len(herramientas) > 1 or herramientas[0] != "🚧 Próximamente":
 else:
     herramienta_seleccionada = None
 
-# Si el pilar no tiene herramientas disponibles, mostrar mensaje
 if herramienta_seleccionada is None or herramienta_seleccionada == "🚧 Próximamente":
     st.title(f"🏋️ Gym Social – {pilar_seleccionado}")
     st.info("🚧 Este pilar estará disponible próximamente. ¡Estamos trabajando para ti!")
     st.stop()
 
 # ------------------------------------------------------------
-# MODO MONITOR
+# MODO MONITOR (CON BOTÓN GUARDAR CONTEXTO)
 # ------------------------------------------------------------
 if herramienta_seleccionada == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
@@ -353,6 +368,8 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
         st.session_state.diagnostico_actual = None
     if 'temp_actual' not in st.session_state:
         st.session_state.temp_actual = 0.9
+    if 'contexto_monitor' not in st.session_state:
+        st.session_state.contexto_monitor = ""
 
     uploaded = st.file_uploader("Selecciona una captura de WhatsApp/Instagram", type=["png", "jpg", "jpeg"],
                                 key="monitor_upload")
@@ -367,6 +384,7 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                 st.session_state.extraccion_monitor = True
                 st.session_state.diagnostico_actual = None
                 st.session_state.temp_actual = 0.9
+                st.session_state.contexto_monitor = ""
 
         if st.session_state.extraccion_monitor:
             conv = st.session_state.conv_monitor
@@ -377,16 +395,25 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                 st.write(f"**{quien}:** {msg['message']}")
 
             if st.checkbox("¿La extracción es correcta?"):
-                contexto = st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...")
+                st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...",
+                             key="contexto_texto")
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if st.button("💾 Guardar contexto"):
+                        st.session_state.contexto_monitor = st.session_state.contexto_texto
+                        st.success("✅ Contexto guardado")
+                if st.session_state.contexto_monitor:
+                    st.info(f"📝 Contexto: {st.session_state.contexto_monitor}")
 
                 boton_texto = "🔄 Obtener otro diagnóstico" if st.session_state.diagnostico_actual else "🧠 Ejecutar diagnóstico"
                 if st.button(boton_texto):
                     if st.session_state.diagnostico_actual:
                         st.session_state.temp_actual = min(st.session_state.temp_actual + 0.05, 1.2)
                     with st.spinner(f"Analizando..."):
-                        analisis = analizar_con_deepseek(conv, contexto, temperatura=st.session_state.temp_actual)
+                        analisis = analizar_con_deepseek(conv, st.session_state.contexto_monitor,
+                                                         temperatura=st.session_state.temp_actual)
                         if analisis is None:
-                            st.warning("No se pudo generar el diagnóstico. Inténtalo de nuevo.")
+                            st.warning("No se pudo generar el diagnóstico.")
                         else:
                             st.session_state.diagnostico_actual = analisis
 
@@ -432,6 +459,8 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
     if 'descripcion_perfil' not in st.session_state:
         st.session_state.descripcion_perfil = None
         st.session_state.perfil_analizado = False
+    if 'contexto_icebreaker' not in st.session_state:
+        st.session_state.contexto_icebreaker = ""
 
     uploaded = st.file_uploader("Selecciona una captura de perfil (Instagram, Tinder...)", type=["png", "jpg", "jpeg"],
                                 key="icebreaker_upload")
@@ -443,20 +472,27 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
                 desc = extraer_perfil_qwen(image)
                 st.session_state.descripcion_perfil = desc
                 st.session_state.perfil_analizado = True
+                st.session_state.contexto_icebreaker = ""
 
         if st.session_state.perfil_analizado:
             st.success("✅ Perfil analizado")
             st.subheader("📄 Descripción extraída")
             st.info(st.session_state.descripcion_perfil)
 
-            contexto = st.text_area("Datos extra (opcional, pero muy importantes)",
-                                    placeholder="¿Hobbies, trabajo, algo que sepas de ella? Esto pesa más que la imagen.",
-                                    key="ice_contexto")
+            st.text_area("Datos extra (opcional, pero muy importantes)",
+                         placeholder="¿Hobbies, trabajo, algo que sepas de ella?", key="contexto_ice_texto")
+            if st.button("💾 Guardar contexto", key="guardar_ice"):
+                st.session_state.contexto_icebreaker = st.session_state.contexto_ice_texto
+                st.success("✅ Contexto guardado")
+            if st.session_state.contexto_icebreaker:
+                st.info(f"📝 Contexto: {st.session_state.contexto_icebreaker}")
+
             temp = st.slider("Creatividad", 0.7, 1.5, 0.95, 0.05)
 
             if st.button("🧊 Generar líneas de apertura"):
                 with st.spinner("Generando icebreakers..."):
-                    ice = generar_icebreakers(st.session_state.descripcion_perfil, contexto, temp)
+                    ice = generar_icebreakers(st.session_state.descripcion_perfil, st.session_state.contexto_icebreaker,
+                                              temp)
 
                 st.subheader(f"👤 {ice.get('perfil_resumen', '')}")
 
