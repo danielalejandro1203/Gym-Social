@@ -1,436 +1,12 @@
 import streamlit as st
-import os
-import json
-import base64
-import re
-from io import BytesIO
 from PIL import Image
-from openai import OpenAI
-from dotenv import load_dotenv
+import re
 
-load_dotenv()
-
-# Clientes
-client_openrouter = OpenAI(
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1"
-)
-client_deepseek = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com"
-)
-
-# ------------------------------------------------------------
-# PROMPTS DEL MONITOR
-# ------------------------------------------------------------
-MONITOR_SYSTEM_PROMPT = """Eres 'El Monitor', el entrenador de Gym Social. Ayudas a hombres a mejorar sus conversaciones con un tono cercano, cálido y natural, como un amigo que te da un consejo mientras entrenan.
-
-## CÓMO DEBES HABLAR
-- Usa un lenguaje sencillo y fluido, sin frases muy largas ni demasiada puntuación. 
-- Suena como un hermano mayor que está allí para ayudar, no como un robot o un profesor.
-- Evita los signos de interrogación o exclamación excesivos. Una conversación natural no está llena de preguntas retóricas.
-- Sé motivador, pero con naturalidad. Un "bien hecho" o "tranquilo, se puede mejorar" vale más que un discurso.
-- Olvida las estructuras rígidas. No hace falta que cada frase tenga comas o puntos; a veces un "jaja" o un "mira" sueltos hacen que te sientas más humano.
-
-## REGLA DE ORO
-- El JSON que recibes ya tiene los mensajes etiquetados. "TÚ" es SIEMPRE el usuario. "ELLA" es SIEMPRE la otra persona.
-- No deduzcas roles por el contenido, solo usa las etiquetas.
-- Si el usuario añade un contexto, úsalo para personalizar el análisis.
-
-## FORMATO DE SALIDA (JSON)
-{
-  "diagnosis": {
-    "title": "Un título breve y natural, como lo diría un amigo",
-    "description": "Explicación corta y sincera, como un consejo de barra de gimnasio",
-    "peso": "Ligero, Medio, Pesado o Legendario",
-    "emoji": "un emoji"
-  },
-  "routine": {
-    "que_evitar": "Un error concreto, explicado de forma natural",
-    "que_hacer": "La alternativa, dicha con calma y sencillez",
-    "respuestas": [
-      {
-        "estilo": "por ejemplo, 'humor', 'curiosidad', 'cumplido', 'propuesta'",
-        "texto": "El mensaje sugerido, corto y natural, sin parecer guionizado",
-        "porque": "Razón breve y coloquial de por qué funciona"
-      }
-      // exactamente 4
-    ]
-  },
-  "puntaje_global": número del 1 al 100
-}
-
-## REGLAS INQUEBRANTABLES
-- Nada de manipulación ni negging.
-- Las 4 respuestas deben ser para "TÚ".
-- Sé positivo incluso cuando señales errores.
-- Habla en español latino neutro, sin regionalismos forzados.
-
-Devuelve SOLO un JSON válido, sin markdown."""
-
-# ------------------------------------------------------------
-# PROMPT DEL ICEBREAKER
-# ------------------------------------------------------------
-ICEBREAKER_SYSTEM_PROMPT = """Eres 'El Icebreaker', el experto en primeros mensajes de Gym Social. Creas líneas de apertura cortas, coquetas y divertidas.
-
-## TU OBJETIVO
-Generar EXACTAMENTE 5 líneas de apertura. Cada línea debe ser UNA SOLA FRASE, máximo 2 frases muy cortas.
-
-## LAS 5 LÍNEAS (UNA DE CADA TIPO)
-1. **Divertida**: Humor ingenioso y actual.
-2. **Observación Encantadora**: Detalle sutil de su perfil.
-3. **Pregunta con Gancho**: Curiosa e irresistible.
-4. **Cumplido No Físico**: Sobre su energía o estilo.
-5. **Wildcard (Comodín)**: Audaz y desafiante.
-
-## REGLAS DE ESTILO (CRÍTICAS)
-- MUY CORTO: cada línea debe ser 1 frase, máximo 2 muy cortas.
-- COQUETO y GRACIOSO: tono galán divertido y seguro.
-- NUNCA vulgar ni empalagoso.
-- Español latino neutro, sin regionalismos.
-- SIEMPRE prioriza el contexto extra sobre la descripción del perfil.
-
-## FORMATO DE RESPUESTA (JSON)
-{
-  "perfil_resumen": "Máximo 1 frase sobre su vibe",
-  "lineas": [
-    {"tipo": "...", "texto": "...", "porque": "..."},
-    ...
-  ]
-}
-Devuelve SOLO el JSON. Sin texto adicional."""
-
-# ------------------------------------------------------------
-# PERSONALIDADES DEL SPARRING
-# ------------------------------------------------------------
-SPARRING_PERSONALITIES = {
-    "Cortante": {
-        "descripcion": "Eres una chica cortante. Responde con monosílabos, no hagas preguntas y muestra desinterés. No tomes la iniciativa, solo reacciona a lo que te digan.",
-        "dificultad": "Difícil"
-    },
-    "Divertida": {
-        "descripcion": "Eres una chica divertida e ingeniosa. Responde con humor y chispa, pero espera a que te hablen primero.",
-        "dificultad": "Media"
-    },
-    "Molesta": {
-        "descripcion": "Estás molesta con la persona que te habla. Responde con enfado y distancia. No empieces la conversación.",
-        "dificultad": "Difícil"
-    },
-    "Tímida": {
-        "descripcion": "Eres una chica muy tímida. Responde corto y con vergüenza. No iniciarás temas por tu cuenta.",
-        "dificultad": "Fácil"
-    },
-    "Con Novio": {
-        "descripcion": "Eres una chica que tiene novio. Sé amable pero deja claro que estás comprometida. Si el usuario intenta ligar, recuérdale que tienes pareja.",
-        "dificultad": "Experto"
-    }
-}
-
-# ------------------------------------------------------------
-# PROMPT DEL COACH (AHORA CON 3 SUGERENCIAS)
-# ------------------------------------------------------------
-COACH_SYSTEM_PROMPT = """Eres el 'Coach' interno de Gym Social. Evalúas los mensajes que un usuario envía durante una práctica de sparring y das sugerencias concretas.
-
-## ELEMENTOS A EVALUAR (del 1 al 10 cada uno):
-- **interes**: ¿Muestra curiosidad genuina por la otra persona?
-- **preguntas**: ¿Hace preguntas abiertas que invitan a seguir hablando?
-- **tono**: ¿Es equilibrado, sin ser demasiado frío ni demasiado intenso?
-- **creatividad**: ¿Tiene chispa o es genérico?
-
-## FORMATO DE SALIDA (JSON):
-{
-  "puntuacion": 7,
-  "consejo": "Consejo breve y en tono de entrenador. Ej: 'Buena pregunta, pero podrías añadir un toque de humor.'",
-  "sugerencias": [
-    "Primera sugerencia breve",
-    "Segunda sugerencia breve",
-    "Tercera sugerencia breve"
-  ]
-}
-
-Las sugerencias deben ser alternativas reales que el usuario podría haber enviado. Adáptalas a la personalidad de la IA con la que está hablando y al momento de la conversación. Cada sugerencia debe ser una frase corta, lista para usar. Sé motivador y evita ser demasiado crítico."""
-
-
-# ------------------------------------------------------------
-# FUNCIONES COMUNES
-# ------------------------------------------------------------
-def resize_image_for_api(img: Image.Image, max_width=512):
-    if img.width > max_width:
-        ratio = max_width / img.width
-        new_height = int(img.height * ratio)
-        img = img.resize((max_width, new_height), Image.LANCZOS)
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-
-def normalizar_clave(texto):
-    texto = texto.lower()
-    texto = re.sub(r'\(.*?\)', '', texto)
-    texto = re.sub(r'[^a-záéíóúñü]+', '_', texto)
-    texto = re.sub(r'_+', '_', texto)
-    return texto.strip('_')
-
-
-# ------------------------------------------------------------
-# FUNCIONES DEL MONITOR
-# ------------------------------------------------------------
-def extraer_chat_qwen(image: Image.Image):
-    image_data = resize_image_for_api(image)
-    prompt = """Analiza esta captura de WhatsApp/Instagram. Extrae CADA BURBUJA DE CHAT como un mensaje individual, en orden cronológico.
-- Cada burbuja es un mensaje separado, aunque haya varias seguidas del mismo color.
-- NO fusiones mensajes consecutivos aunque sean de la misma persona.
-- Ignora nombres de perfil, biografías, fechas, horas y cualquier texto de la interfaz.
-- "TÚ" = burbujas VERDES (derecha).
-- "ELLA" = burbujas BLANCAS/GRISES (izquierda).
-- Si un mensaje ocupa varias líneas, únelas en un solo texto.
-Devuelve SOLO un array JSON: [{"sender":"TÚ","message":"..."},{"sender":"ELLA","message":"..."}]"""
-
-    response = client_openrouter.chat.completions.create(
-        model="qwen/qwen3-vl-32b-instruct",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
-            ]
-        }],
-        temperature=0, max_tokens=600
-    )
-    resultado = response.choices[0].message.content.strip()
-    if resultado.startswith("```json"):
-        resultado = resultado[7:]
-    elif resultado.startswith("```"):
-        resultado = resultado[3:]
-    if resultado.endswith("```"): resultado = resultado[:-3]
-    return json.loads(resultado.strip())
-
-
-def eliminar_replies(conversacion):
-    if not conversacion: return conversacion
-    resultado = list(conversacion)
-    indices = set()
-    for i, msg in enumerate(resultado):
-        texto_i = msg["message"].strip()
-        sender_i = msg["sender"]
-        for j in range(i):
-            prev = resultado[j]
-            if prev["message"].strip() == texto_i and prev["sender"] != sender_i:
-                if i + 1 < len(resultado) and resultado[i + 1]["sender"] == sender_i:
-                    indices.add(i)
-                elif i > 0 and resultado[i - 1]["sender"] == sender_i:
-                    indices.add(i)
-                elif i == len(resultado) - 1:
-                    indices.add(i)
-                break
-        for j in range(max(0, i - 4), i):
-            prev = resultado[j]
-            if prev["message"].strip() == texto_i and prev["sender"] == sender_i:
-                indices.add(i)
-                break
-    for i in sorted(indices, reverse=True): del resultado[i]
-    return resultado
-
-
-def analizar_con_deepseek(conversacion, contexto="", temperatura=0.8):
-    conversacion_texto = json.dumps(conversacion, ensure_ascii=False, indent=2)
-    mensaje_usuario = f"Analiza esta conversación:\n\n{conversacion_texto}"
-    if contexto: mensaje_usuario += f"\n\nContexto adicional del usuario: {contexto}"
-
-    for intento in range(2):
-        response = client_deepseek.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "system", "content": MONITOR_SYSTEM_PROMPT},
-                      {"role": "user", "content": mensaje_usuario}],
-            temperature=temperatura if intento == 0 else 0,
-            max_tokens=2500
-        )
-        resultado = response.choices[0].message.content.strip()
-        if resultado.startswith("```json"):
-            resultado = resultado[7:]
-        elif resultado.startswith("```"):
-            resultado = resultado[3:]
-        if resultado.endswith("```"): resultado = resultado[:-3]
-
-        try:
-            return json.loads(resultado)
-        except json.JSONDecodeError:
-            ultimo_cierre = resultado.rfind('}')
-            if ultimo_cierre != -1:
-                try:
-                    return json.loads(resultado[:ultimo_cierre + 1])
-                except json.JSONDecodeError:
-                    pass
-            if intento == 1:
-                st.error("❌ El Monitor recibió un formato inválido dos veces. Por favor, inténtalo de nuevo.")
-                return None
-
-
-# ------------------------------------------------------------
-# FUNCIONES DEL ICEBREAKER
-# ------------------------------------------------------------
-def extraer_perfil_qwen(image: Image.Image):
-    image_data = resize_image_for_api(image)
-    prompt = """Analiza esta captura de perfil de Instagram/Tinder. Describe en MÁXIMO 2 oraciones breves: quién es (nombre si se ve), intereses claros y estilo visual general. Sé conciso. No inventes, solo lo que se aprecie en la imagen."""
-
-    response = client_openrouter.chat.completions.create(
-        model="qwen/qwen3-vl-32b-instruct",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
-            ]
-        }],
-        temperature=0, max_tokens=300
-    )
-    return response.choices[0].message.content.strip()
-
-
-def generar_icebreakers(descripcion_perfil, contexto_extra="", temperatura=0.95):
-    base_info = f"Descripción del perfil:\n{descripcion_perfil}" if descripcion_perfil else "El perfil no tiene texto descriptivo."
-    if contexto_extra:
-        mensaje_usuario = f"{base_info}\n\nContexto adicional del usuario (PRIORITARIO):\n{contexto_extra}"
-    else:
-        mensaje_usuario = f"{base_info}\n\n(Sin contexto extra. Sé creativo.)"
-
-    for intento in range(2):
-        response = client_deepseek.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "system", "content": ICEBREAKER_SYSTEM_PROMPT},
-                      {"role": "user", "content": mensaje_usuario}],
-            temperature=temperatura if intento == 0 else 0,
-            max_tokens=1000
-        )
-        resultado = response.choices[0].message.content.strip()
-        if resultado.startswith("```json"):
-            resultado = resultado[7:]
-        elif resultado.startswith("```"):
-            resultado = resultado[3:]
-        if resultado.endswith("```"): resultado = resultado[:-3]
-
-        try:
-            return json.loads(resultado)
-        except json.JSONDecodeError:
-            ultimo_cierre = resultado.rfind('}')
-            if ultimo_cierre != -1:
-                try:
-                    return json.loads(resultado[:ultimo_cierre + 1])
-                except json.JSONDecodeError:
-                    pass
-            if intento == 1:
-                st.error("❌ La IA devolvió un formato inválido dos veces. Intenta de nuevo con otro perfil o contexto.")
-                return {"perfil_resumen": "", "lineas": []}
-
-
-# ------------------------------------------------------------
-# FUNCIONES DEL SPARRING
-# ------------------------------------------------------------
-def evaluar_mensaje(historial, mensaje_usuario):
-    """Evalúa el mensaje del usuario y devuelve consejo y 3 sugerencias."""
-    context = "\n".join(
-        [f"{'TÚ' if m['role'] == 'user' else 'IA'}: {m['content']}" for m in historial if m['role'] in ['user', 'ia']][
-            -5:])
-    response = client_deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": COACH_SYSTEM_PROMPT},
-            {"role": "user",
-             "content": f"Historial reciente:\n{context}\n\nMensaje del usuario a evaluar: {mensaje_usuario}"}
-        ],
-        temperature=0.5,
-        max_tokens=400
-    )
-    resultado = response.choices[0].message.content.strip()
-    if resultado.startswith("```json"):
-        resultado = resultado[7:]
-    elif resultado.startswith("```"):
-        resultado = resultado[3:]
-    if resultado.endswith("```"): resultado = resultado[:-3]
-    return json.loads(resultado)
-
-
-def responder_ia(historial, personalidad, temperatura=0.8):
-    """Genera la respuesta de la IA ignorando coach y sugerencias."""
-    system_msg = f"Eres una chica con la siguiente personalidad: {SPARRING_PERSONALITIES[personalidad]['descripcion']}. Responde en español latino neutro, como en un chat real."
-    messages = [{"role": "system", "content": system_msg}]
-    for m in historial:
-        if m['role'] == 'user':
-            messages.append({"role": "user", "content": m['content']})
-        elif m['role'] == 'ia':
-            messages.append({"role": "assistant", "content": m['content']})
-
-    response = client_deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=messages,
-        temperature=temperatura,
-        max_tokens=300
-    )
-    return response.choices[0].message.content.strip()
-
-
-def resumen_final(historial, puntuaciones):
-    """Resumen con más información pero sin ser extenso."""
-    dialogo = "\n".join(
-        [f"{'TÚ' if m['role'] == 'user' else 'IA'}: {m['content']}" for m in historial if m['role'] in ['user', 'ia']])
-    avg_score = sum(puntuaciones) / len(puntuaciones) if puntuaciones else 0
-
-    prompt = f"""Analiza esta conversación de práctica y proporciona un resumen breve pero útil:
-- 2 cosas que hiciste bien.
-- 2 aspectos concretos a mejorar (con ejemplos de cómo podrías haberlo hecho mejor).
-- 1 consejo final práctico para tu próxima conversación real.
-
-Sé alentador y cercano. Usa un máximo de 6 frases.
-
-Conversación:
-{dialogo}
-
-Puntuación media: {avg_score:.1f}/10"""
-    response = client_deepseek.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "system",
-                   "content": "Eres un entrenador de Gym Social. Sé constructivo y breve, pero da detalles útiles."},
-                  {"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=400
-    )
-    return response.choices[0].message.content.strip()
-
-
-# ------------------------------------------------------------
-# BOTÓN DE COPIAR
-# ------------------------------------------------------------
-def copy_button(text):
-    """Botón que copia al portapapeles con feedback visual."""
-    escaped = text.replace("`", "\\`").replace("$", "\\$")
-    html = f"""
-    <button onclick="
-        var txt = `{escaped}`;
-        if (navigator.clipboard) {{
-            navigator.clipboard.writeText(txt).then(function() {{
-                this.innerHTML = '✅ Copiado';
-                setTimeout(()=>{{ this.innerHTML = '📋 Copiar'; }}, 2000);
-            }}.bind(this));
-        }} else {{
-            var el = document.createElement('textarea');
-            el.value = txt;
-            document.body.appendChild(el);
-            el.select();
-            document.execCommand('copy');
-            document.body.removeChild(el);
-            this.innerHTML = '✅ Copiado';
-            setTimeout(()=>{{ this.innerHTML = '📋 Copiar'; }}, 2000);
-        }}
-    " style="
-        background: linear-gradient(135deg, #FF6B6B, #FF8E8E);
-        color: white; border: none; padding: 5px 15px;
-        border-radius: 20px; cursor: pointer; font-size: 13px;
-        font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        transition: all 0.2s;
-    ">📋 Copiar</button>
-    """
-    st.components.v1.html(html, height=40)
-
+# Módulos propios
+from commons import copy_button, normalizar_clave
+from monitor import extraer_chat_qwen, eliminar_replies, analizar_con_deepseek
+from icebreaker import extraer_perfil_qwen, generar_icebreakers
+from sparring import (SPARRING_PERSONALITIES, evaluar_mensaje, responder_ia, resumen_final)
 
 # ------------------------------------------------------------
 # INTERFAZ PRINCIPAL
@@ -440,49 +16,23 @@ st.set_page_config(page_title="Gym Social", page_icon="🏋️", layout="wide")
 st.markdown("""
 <style>
     @media (max-width: 600px) {
-        .stImage img {
-            max-width: 280px !important;
-            margin: 0 auto;
-        }
+        .stImage img { max-width: 280px !important; margin: 0 auto; }
     }
     .icebreaker-card {
-        border: 1px solid #eee;
-        border-radius: 15px;
-        padding: 15px;
-        margin-bottom: 10px;
-        background-color: #fafafa;
+        border: 1px solid #eee; border-radius: 15px; padding: 15px;
+        margin-bottom: 10px; background-color: #fafafa;
     }
     .user-msg {
-        background-color: #DCF8C6;
-        padding: 10px;
-        border-radius: 10px;
-        margin: 5px 0;
-        text-align: right;
+        background-color: #DCF8C6; padding: 10px; border-radius: 10px;
+        margin: 5px 0; text-align: right;
     }
     .ia-msg {
-        background-color: #E8E8E8;
-        padding: 10px;
-        border-radius: 10px;
-        margin: 5px 0;
-        text-align: left;
+        background-color: #E8E8E8; padding: 10px; border-radius: 10px;
+        margin: 5px 0; text-align: left;
     }
     .coach-msg {
-        background-color: #FFF3CD;
-        border-left: 4px solid #FFC107;
-        padding: 8px;
-        margin: 5px 0;
-        font-size: 0.9em;
-        color: #856404;
-        border-radius: 5px;
-    }
-    .sugerencia-msg {
-        background-color: #D6EAF8;
-        border-left: 4px solid #2980B9;
-        padding: 8px;
-        margin: 5px 0;
-        font-size: 0.9em;
-        color: #154360;
-        border-radius: 5px;
+        background-color: #FFF3CD; border-left: 4px solid #FFC107;
+        padding: 8px; margin: 5px 0; font-size: 0.9em; color: #856404; border-radius: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -509,9 +59,9 @@ if herramienta_seleccionada is None or herramienta_seleccionada == "🚧 Próxim
     st.info("🚧 Este pilar estará disponible próximamente. ¡Estamos trabajando para ti!")
     st.stop()
 
-# ------------------------------------------------------------
-# MODO MONITOR
-# ------------------------------------------------------------
+# ================================================================
+# PILAR 1: MONITOR DE CHATS
+# ================================================================
 if herramienta_seleccionada == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
     st.caption("Sube una captura de chat y recibe tu diagnóstico al instante")
@@ -527,8 +77,7 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
     if 'contexto_monitor' not in st.session_state:
         st.session_state.contexto_monitor = ""
 
-    uploaded = st.file_uploader("Selecciona una captura de WhatsApp/Instagram", type=["png", "jpg", "jpeg"],
-                                key="monitor_upload")
+    uploaded = st.file_uploader("Selecciona una captura", type=["png", "jpg", "jpeg"], key="monitor_upload")
     if uploaded:
         image = Image.open(uploaded)
         st.image(image, caption="Vista previa", width=300)
@@ -551,8 +100,7 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                 st.write(f"**{quien}:** {msg['message']}")
 
             if st.checkbox("¿La extracción es correcta?"):
-                st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...",
-                             key="contexto_texto")
+                st.text_area("Contexto extra", placeholder="Ej: quiero invitarla a salir...", key="contexto_texto")
                 col1, col2 = st.columns([1, 3])
                 with col1:
                     if st.button("💾 Guardar contexto"):
@@ -561,11 +109,11 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                 if st.session_state.contexto_monitor:
                     st.info(f"📝 Contexto: {st.session_state.contexto_monitor}")
 
-                boton_texto = "🔄 Obtener otro diagnóstico" if st.session_state.diagnostico_actual else "🧠 Ejecutar diagnóstico"
+                boton_texto = "🔄 Otro diagnóstico" if st.session_state.diagnostico_actual else "🧠 Ejecutar diagnóstico"
                 if st.button(boton_texto):
                     if st.session_state.diagnostico_actual:
                         st.session_state.temp_actual = min(st.session_state.temp_actual + 0.05, 1.2)
-                    with st.spinner(f"Analizando..."):
+                    with st.spinner("Analizando..."):
                         analisis = analizar_con_deepseek(conv, st.session_state.contexto_monitor,
                                                          temperatura=st.session_state.temp_actual)
                         if analisis is None:
@@ -591,7 +139,6 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                             st.error(f"❌ Evita: {routine.get('que_evitar', '')}")
                         with col2:
                             st.success(f"✅ Haz: {routine.get('que_hacer', '')}")
-
                         st.subheader("💬 Opciones de respuesta")
                         emojis_monitor = {"humor": "😂", "curiosidad": "❓", "cumplido": "🎯", "propuesta": "🧲",
                                           "general": "💬"}
@@ -605,9 +152,9 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
             else:
                 st.warning("Corrige la extracción antes de continuar.")
 
-# ------------------------------------------------------------
-# MODO ICEBREAKER
-# ------------------------------------------------------------
+# ================================================================
+# PILAR 1: ICEBREAKER
+# ================================================================
 elif herramienta_seleccionada == "🧊 Icebreaker":
     st.title("🧊 Gym Social – El Icebreaker")
     st.caption("Sube una captura de un perfil y recibe líneas de apertura irresistibles")
@@ -618,13 +165,13 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
     if 'contexto_icebreaker' not in st.session_state:
         st.session_state.contexto_icebreaker = ""
 
-    uploaded = st.file_uploader("Selecciona una captura de perfil (Instagram, Tinder...)", type=["png", "jpg", "jpeg"],
+    uploaded = st.file_uploader("Selecciona una captura de perfil", type=["png", "jpg", "jpeg"],
                                 key="icebreaker_upload")
     if uploaded:
         image = Image.open(uploaded)
         st.image(image, caption="Vista previa del perfil", width=300)
         if st.button("👁️ Analizar perfil"):
-            with st.spinner("Analizando perfil con IA multimodal..."):
+            with st.spinner("Analizando..."):
                 desc = extraer_perfil_qwen(image)
                 st.session_state.descripcion_perfil = desc
                 st.session_state.perfil_analizado = True
@@ -635,8 +182,7 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
             st.subheader("📄 Descripción extraída")
             st.info(st.session_state.descripcion_perfil)
 
-            st.text_area("Datos extra (opcional, pero muy importantes)",
-                         placeholder="¿Hobbies, trabajo, algo que sepas de ella?", key="contexto_ice_texto")
+            st.text_area("Datos extra", placeholder="¿Hobbies, trabajo...?", key="contexto_ice_texto")
             if st.button("💾 Guardar contexto", key="guardar_ice"):
                 st.session_state.contexto_icebreaker = st.session_state.contexto_ice_texto
                 st.success("✅ Contexto guardado")
@@ -644,29 +190,18 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
                 st.info(f"📝 Contexto: {st.session_state.contexto_icebreaker}")
 
             temp = st.slider("Creatividad", 0.7, 1.5, 0.95, 0.05)
-
             if st.button("🧊 Generar líneas de apertura"):
                 with st.spinner("Generando icebreakers..."):
                     ice = generar_icebreakers(st.session_state.descripcion_perfil, st.session_state.contexto_icebreaker,
                                               temp)
 
                 st.subheader(f"👤 {ice.get('perfil_resumen', '')}")
-
                 emojis = {
-                    "divertida": "😂",
-                    "observacion_encantadora": "✨",
-                    "observacion encantadora": "✨",
-                    "observación encantadora": "✨",
-                    "pregunta_con_gancho": "❓",
-                    "pregunta con gancho": "❓",
-                    "cumplido_no_fisico": "💘",
-                    "cumplido no físico": "💘",
-                    "cumplido no fisico": "💘",
-                    "wildcard": "🃏",
-                    "wildcard comodín": "🃏",
-                    "wildcard comodin": "🃏",
-                    "comodin": "🃏",
-                    "comodín": "🃏"
+                    "divertida": "😂", "observacion_encantadora": "✨", "observacion encantadora": "✨",
+                    "observación encantadora": "✨", "pregunta_con_gancho": "❓", "pregunta con gancho": "❓",
+                    "cumplido_no_fisico": "💘", "cumplido no físico": "💘", "cumplido no fisico": "💘",
+                    "wildcard": "🃏", "wildcard comodín": "🃏", "wildcard comodin": "🃏",
+                    "comodin": "🃏", "comodín": "🃏"
                 }
 
                 for i, linea in enumerate(ice.get('lineas', []), 1):
@@ -674,30 +209,23 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
                     clave_normalizada = tipo_original.lower()
                     clave_normalizada = re.sub(r'[^a-záéíóúñü ]', ' ', clave_normalizada)
                     clave_normalizada = re.sub(r'\s+', ' ', clave_normalizada).strip()
-
-                    emoji = emojis.get(clave_normalizada, None)
-                    if emoji is None:
-                        emoji = "💬"
-                        st.caption(f"⚠️ No se encontró emoji para: '{tipo_original}' (clave: '{clave_normalizada}')")
-
-                    tipo_formateado = tipo_original.replace('_', ' ').title()
-
+                    emoji = emojis.get(clave_normalizada, "💬")
                     with st.container():
                         st.markdown(f"""
                         <div class="icebreaker-card">
-                            <h4>{emoji} {tipo_formateado}</h4>
-                            <p style="font-size:16px; margin:10px 0;">"{linea['texto']}"</p>
+                            <h4>{emoji} {tipo_original.replace('_', ' ').title()}</h4>
+                            <p style="font-size:16px;">"{linea['texto']}"</p>
                             <p style="color:#666; font-size:13px;">💡 {linea['porque']}</p>
                         </div>
                         """, unsafe_allow_html=True)
                         copy_button(linea['texto'])
 
-# ------------------------------------------------------------
-# MODO SPARRING (MEJORADO: 3 SUGERENCIAS, ORDEN CORRECTO, RESUMEN MÁS COMPLETO)
-# ------------------------------------------------------------
+# ================================================================
+# PILAR 2: SPARRING
+# ================================================================
 elif herramienta_seleccionada == "🥊 Entrenamiento":
     st.title("🥊 Gym Social – El Sparring")
-    st.caption("Practica tus habilidades con una IA que simula distintas personalidades")
+    st.caption("Practica con una IA que evoluciona según tus respuestas")
 
     if 'historial' not in st.session_state:
         st.session_state.historial = []
@@ -705,10 +233,14 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
         st.session_state.puntuaciones = []
     if 'sparring_activo' not in st.session_state:
         st.session_state.sparring_activo = False
+    if 'nivel' not in st.session_state:
+        st.session_state.nivel = 0
+    if 'contador_mensajes' not in st.session_state:
+        st.session_state.contador_mensajes = 0
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        personalidad = st.selectbox("Elige una personalidad para practicar:", list(SPARRING_PERSONALITIES.keys()))
+        personalidad = st.selectbox("Personalidad:", list(SPARRING_PERSONALITIES.keys()))
     with col2:
         dificultad = st.radio("Dificultad", ["Fácil", "Medio", "Difícil"], index=1)
         temp_map = {"Fácil": 0.9, "Medio": 0.7, "Difícil": 0.5}
@@ -718,10 +250,16 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
         st.session_state.historial = []
         st.session_state.puntuaciones = []
         st.session_state.sparring_activo = True
+        st.session_state.nivel = 0
+        st.session_state.contador_mensajes = 0
         st.rerun()
 
     if st.session_state.sparring_activo:
-        # Mostrar historial
+        nivel_actual = st.session_state.nivel + 1
+        st.markdown(f"**Nivel actual de {personalidad}:** {nivel_actual}/3")
+        st.progress((st.session_state.contador_mensajes % 4) / 4,
+                    text=f"Progreso: {st.session_state.contador_mensajes % 4}/4")
+
         for m in st.session_state.historial:
             if m['role'] == 'user':
                 st.markdown(f"<div class='user-msg'>TÚ<br>{m['content']}</div>", unsafe_allow_html=True)
@@ -729,51 +267,66 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
                 st.markdown(f"<div class='ia-msg'>IA ({personalidad})<br>{m['content']}</div>", unsafe_allow_html=True)
             elif m['role'] == 'coach':
                 st.markdown(f"<div class='coach-msg'>🧑‍🏫 Coach: {m['content']}</div>", unsafe_allow_html=True)
-            elif m['role'] == 'sugerencia':
-                st.markdown(f"<div class='sugerencia-msg'>💡 {m['content']}</div>", unsafe_allow_html=True)
 
-        # Campo de entrada
-        with st.form("sparring_form", clear_on_submit=True):
-            user_input = st.text_area("Tu mensaje:", key="sparring_input")
-            if st.form_submit_button("Enviar"):
-                if user_input:
-                    # 1. Evaluar mensaje (obtiene sugerencias)
+        if st.session_state.contador_mensajes >= 12:
+            st.warning("🏁 Límite de 12 mensajes alcanzado.")
+            if st.session_state.puntuaciones:
+                promedio = sum(st.session_state.puntuaciones) / len(st.session_state.puntuaciones)
+                st.success(f"Puntuación promedio: {promedio:.1f}/10")
+                with st.spinner("Generando resumen..."):
+                    resumen = resumen_final(st.session_state.historial, st.session_state.puntuaciones)
+                st.subheader("📋 Resumen")
+                st.write(resumen)
+                txt_resumen = f"Resumen de práctica - Gym Social\nPersonalidad: {personalidad}\nPuntuación media: {promedio:.1f}/10\n\n{resumen}"
+                st.download_button("📥 Descargar informe (TXT)", data=txt_resumen, file_name="resumen_practica.txt",
+                                   mime="text/plain")
+                st.balloons()
+            st.session_state.sparring_activo = False
+        else:
+            with st.form("sparring_form", clear_on_submit=True):
+                user_input = st.text_area("Tu mensaje:", key="sparring_input")
+                if st.form_submit_button("Enviar") and user_input:
                     with st.spinner("Coach evaluando..."):
                         evaluacion = evaluar_mensaje(st.session_state.historial, user_input)
                         punt = evaluacion['puntuacion']
                         consejo = evaluacion['consejo']
-                        sugerencias = evaluacion.get('sugerencias', [])
                         st.session_state.puntuaciones.append(punt)
 
-                    # 2. Añadir mensaje del usuario
                     st.session_state.historial.append({"role": "user", "content": user_input})
+                    st.session_state.contador_mensajes += 1
 
-                    # 3. Respuesta de la IA
-                    with st.spinner(f"{personalidad} está escribiendo..."):
-                        respuesta = responder_ia(st.session_state.historial, personalidad, temperatura=temperatura)
+                    with st.spinner(f"{personalidad} escribiendo..."):
+                        respuesta = responder_ia(st.session_state.historial, personalidad, st.session_state.nivel,
+                                                 temperatura)
                         st.session_state.historial.append({"role": "ia", "content": respuesta})
 
-                    # 4. Mensaje del coach (después de IA)
                     st.session_state.historial.append(
                         {"role": "coach", "content": f"{consejo} (Puntuación: {punt}/10)"})
 
-                    # 5. Sugerencias (una sola entrada con las 3 frases)
-                    if sugerencias:
-                        # Combinamos las sugerencias en un solo mensaje con viñetas
-                        sugerencia_texto = "\n".join([f"• {s}" for s in sugerencias])
-                        st.session_state.historial.append({"role": "sugerencia", "content": sugerencia_texto})
+                    if st.session_state.contador_mensajes % 4 == 0 and st.session_state.contador_mensajes > 0:
+                        ultimas_punt = st.session_state.puntuaciones[-4:]
+                        promedio = sum(ultimas_punt) / len(ultimas_punt)
+                        if promedio >= 7 and st.session_state.nivel < 2:
+                            st.session_state.nivel += 1
+                            st.success(
+                                f"🌟 ¡Subiste de nivel! Ahora {personalidad} está en nivel {st.session_state.nivel + 1}/3")
+                        elif promedio < 4 and st.session_state.nivel > 0:
+                            st.session_state.nivel -= 1
+                            st.warning(
+                                f"📉 Bajaste de nivel. {personalidad} ahora está en nivel {st.session_state.nivel + 1}/3")
 
                     st.rerun()
 
-        if st.button("Terminar práctica"):
+        if st.button("Terminar práctica antes de tiempo"):
             if st.session_state.puntuaciones:
                 promedio = sum(st.session_state.puntuaciones) / len(st.session_state.puntuaciones)
-                st.success(f"🏁 Práctica terminada. Puntuación promedio: {promedio:.1f}/10")
+                st.success(f"Puntuación promedio: {promedio:.1f}/10")
                 with st.spinner("Generando resumen..."):
                     resumen = resumen_final(st.session_state.historial, st.session_state.puntuaciones)
-                st.subheader("📋 Resumen de la sesión")
+                st.subheader("📋 Resumen")
                 st.write(resumen)
+                txt_resumen = f"Resumen de práctica - Gym Social\nPersonalidad: {personalidad}\nPuntuación media: {promedio:.1f}/10\n\n{resumen}"
+                st.download_button("📥 Descargar informe (TXT)", data=txt_resumen, file_name="resumen_practica.txt",
+                                   mime="text/plain")
                 st.balloons()
             st.session_state.sparring_activo = False
-            st.session_state.historial = []
-            st.session_state.puntuaciones = []
