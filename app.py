@@ -7,6 +7,7 @@ from commons import copy_button, normalizar_clave
 from monitor import extraer_chat_qwen, eliminar_replies, analizar_con_deepseek
 from icebreaker import extraer_perfil_qwen, generar_icebreakers
 from sparring import (SPARRING_PERSONALITIES, evaluar_mensaje, responder_ia, resumen_final)
+from espejo import analizar_imagen_perfil, generar_auditoria
 
 # ------------------------------------------------------------
 # INTERFAZ PRINCIPAL
@@ -42,7 +43,7 @@ st.sidebar.title("🏋️ Gym Social")
 pilares_disponibles = {
     "Pilar 1: El Monitor": ["📊 Monitor de Chats", "🧊 Icebreaker"],
     "Pilar 2: El Sparring": ["🥊 Entrenamiento"],
-    "Pilar 3: El Espejo": ["🚧 Próximamente"],
+    "Pilar 3: El Espejo": ["🪞 Auditoría de Perfil"],
     "Pilar 4: La Arena": ["🚧 Próximamente"]
 }
 
@@ -330,3 +331,51 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
                                    mime="text/plain")
                 st.balloons()
             st.session_state.sparring_activo = False
+
+# ================================================================
+# PILAR 3: EL ESPEJO
+# ================================================================
+elif herramienta_seleccionada == "🪞 Auditoría de Perfil":
+    st.title("🪞 Gym Social – El Espejo")
+    st.caption("Sube capturas de tu perfil y descubre cómo mejorarlo")
+
+    uploaded_files = st.file_uploader(
+        "Sube de 1 a 3 capturas de tu perfil (bio, fotos, destacadas…)",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="espejo_upload"
+    )
+
+    if uploaded_files:
+        images = [Image.open(f) for f in uploaded_files]
+        cols = st.columns(len(images))
+        for i, (img, col) in enumerate(zip(images, cols)):
+            col.image(img, caption=f"Captura {i + 1}", width=200)
+
+        if st.button("🪞 Analizar mi perfil"):
+            descripciones = []
+            progress_bar = st.progress(0)
+            for i, img in enumerate(images):
+                with st.spinner(f"Analizando captura {i + 1}..."):
+                    desc = analizar_imagen_perfil(img)
+                    descripciones.append(desc)
+                progress_bar.progress((i + 1) / len(images))
+
+            st.success("✅ Perfil analizado")
+            with st.spinner("Generando informe personalizado..."):
+                auditoria = generar_auditoria(descripciones)
+
+            if auditoria:
+                st.subheader(f"🎯 Puntuación general: {auditoria['puntuacion_general']}/100")
+
+                with st.expander("📸 Análisis de tus fotos"):
+                    for linea in auditoria.get('analisis_fotos', []):
+                        st.write(f"- {linea}")
+
+                with st.expander("📝 Tu bio"):
+                    st.write(auditoria.get('evaluacion_bio', ''))
+
+                with st.expander("🎨 Consejos de estilo"):
+                    st.write(auditoria.get('consejos_estilo', ''))
+
+                st.info(f"🎯 **Misión de hoy:** {auditoria.get('mision_diaria', '')}")
