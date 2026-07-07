@@ -61,11 +61,11 @@ if herramienta_seleccionada is None or herramienta_seleccionada == "🚧 Próxim
     st.stop()
 
 # ================================================================
-# PILAR 1: MONITOR DE CHATS
+# PILAR 1: MONITOR DE CHATS (CON HASTA 2 CAPTURAS)
 # ================================================================
 if herramienta_seleccionada == "📊 Monitor de Chats":
     st.title("🏋️ Gym Social – El Monitor")
-    st.caption("Sube una captura de chat y recibe tu diagnóstico al instante")
+    st.caption("Sube 1 o 2 capturas de la conversación (en orden)")
 
     if 'conv_monitor' not in st.session_state:
         st.session_state.conv_monitor = None
@@ -78,19 +78,40 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
     if 'contexto_monitor' not in st.session_state:
         st.session_state.contexto_monitor = ""
 
-    uploaded = st.file_uploader("Selecciona una captura", type=["png", "jpg", "jpeg"], key="monitor_upload")
-    if uploaded:
-        image = Image.open(uploaded)
-        st.image(image, caption="Vista previa", width=300)
+    uploaded_files = st.file_uploader(
+        "Selecciona 1 o 2 capturas de WhatsApp/Instagram/Tinder",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="monitor_upload"
+    )
+
+    if uploaded_files:
+        cols = st.columns(len(uploaded_files))
+        for i, (file, col) in enumerate(zip(uploaded_files, cols)):
+            col.image(Image.open(file), caption=f"Captura {i + 1}", width=250)
+
         if st.button("🔍 Analizar conversación"):
-            with st.spinner("Extrayendo mensajes..."):
-                crudos = extraer_chat_qwen(image)
-                conversacion = eliminar_replies(crudos)
-                st.session_state.conv_monitor = conversacion
-                st.session_state.extraccion_monitor = True
-                st.session_state.diagnostico_actual = None
-                st.session_state.temp_actual = 0.9
-                st.session_state.contexto_monitor = ""
+            if len(uploaded_files) > 2:
+                st.warning("⚠️ Máximo 2 capturas permitidas. Se analizarán solo las dos primeras.")
+                uploaded_files = uploaded_files[:2]
+
+            all_messages = []
+            progress_bar = st.progress(0)
+
+            for i, file in enumerate(uploaded_files):
+                image = Image.open(file)
+                with st.spinner(f"Extrayendo mensajes de captura {i + 1}..."):
+                    crudos = extraer_chat_qwen(image)
+                    all_messages.extend(crudos)
+                progress_bar.progress((i + 1) / len(uploaded_files))
+
+            conversacion = eliminar_replies(all_messages)
+            st.session_state.conv_monitor = conversacion
+            st.session_state.extraccion_monitor = True
+            st.session_state.diagnostico_actual = None
+            st.session_state.temp_actual = 0.9
+            st.session_state.contexto_monitor = ""
+            st.rerun()
 
         if st.session_state.extraccion_monitor:
             conv = st.session_state.conv_monitor
@@ -101,7 +122,8 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                 st.write(f"**{quien}:** {msg['message']}")
 
             if st.checkbox("¿La extracción es correcta?"):
-                st.text_area("Contexto extra", placeholder="Ej: quiero invitarla a salir...", key="contexto_texto")
+                st.text_area("Contexto extra (opcional)", placeholder="Ej: quiero invitarla a salir...",
+                             key="contexto_texto")
                 col1, col2 = st.columns([1, 3])
                 with col1:
                     if st.button("💾 Guardar contexto"):
@@ -154,11 +176,11 @@ if herramienta_seleccionada == "📊 Monitor de Chats":
                 st.warning("Corrige la extracción antes de continuar.")
 
 # ================================================================
-# PILAR 1: ICEBREAKER
+# PILAR 1: ICEBREAKER (CON HASTA 2 CAPTURAS)
 # ================================================================
 elif herramienta_seleccionada == "🧊 Icebreaker":
     st.title("🧊 Gym Social – El Icebreaker")
-    st.caption("Sube una captura de un perfil y recibe líneas de apertura irresistibles")
+    st.caption("Sube 1 o 2 capturas del perfil (bio, destacadas, fotos…)")
 
     if 'descripcion_perfil' not in st.session_state:
         st.session_state.descripcion_perfil = None
@@ -166,24 +188,45 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
     if 'contexto_icebreaker' not in st.session_state:
         st.session_state.contexto_icebreaker = ""
 
-    uploaded = st.file_uploader("Selecciona una captura de perfil", type=["png", "jpg", "jpeg"],
-                                key="icebreaker_upload")
-    if uploaded:
-        image = Image.open(uploaded)
-        st.image(image, caption="Vista previa del perfil", width=300)
+    uploaded_files = st.file_uploader(
+        "Selecciona 1 o 2 capturas de perfil (Instagram, Tinder…)",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="icebreaker_upload"
+    )
+
+    if uploaded_files:
+        cols = st.columns(len(uploaded_files))
+        for i, (file, col) in enumerate(zip(uploaded_files, cols)):
+            col.image(Image.open(file), caption=f"Captura {i + 1}", width=250)
+
         if st.button("👁️ Analizar perfil"):
-            with st.spinner("Analizando..."):
-                desc = extraer_perfil_qwen(image)
-                st.session_state.descripcion_perfil = desc
-                st.session_state.perfil_analizado = True
-                st.session_state.contexto_icebreaker = ""
+            if len(uploaded_files) > 2:
+                st.warning("⚠️ Máximo 2 capturas permitidas. Se analizarán solo las dos primeras.")
+                uploaded_files = uploaded_files[:2]
+
+            descripciones = []
+            progress_bar = st.progress(0)
+            for i, file in enumerate(uploaded_files):
+                image = Image.open(file)
+                with st.spinner(f"Analizando captura {i + 1}..."):
+                    desc = extraer_perfil_qwen(image)
+                    descripciones.append(desc)
+                progress_bar.progress((i + 1) / len(uploaded_files))
+
+            st.session_state.descripcion_perfil = "\n\n".join(descripciones)
+            st.session_state.perfil_analizado = True
+            st.session_state.contexto_icebreaker = ""
+            st.rerun()
 
         if st.session_state.perfil_analizado:
             st.success("✅ Perfil analizado")
             st.subheader("📄 Descripción extraída")
             st.info(st.session_state.descripcion_perfil)
 
-            st.text_area("Datos extra", placeholder="¿Hobbies, trabajo...?", key="contexto_ice_texto")
+            st.text_area("Datos extra (opcional, pero muy importantes)",
+                         placeholder="¿Hobbies, trabajo, algo que sepas de ella? Esto pesa más que la imagen.",
+                         key="contexto_ice_texto")
             if st.button("💾 Guardar contexto", key="guardar_ice"):
                 st.session_state.contexto_icebreaker = st.session_state.contexto_ice_texto
                 st.success("✅ Contexto guardado")
@@ -222,11 +265,11 @@ elif herramienta_seleccionada == "🧊 Icebreaker":
                         copy_button(linea['texto'])
 
 # ================================================================
-# PILAR 2: SPARRING
+# PILAR 2: SPARRING (SIN CAMBIOS)
 # ================================================================
 elif herramienta_seleccionada == "🥊 Entrenamiento":
     st.title("🥊 Gym Social – El Sparring")
-    st.caption("Practica con una IA que evoluciona según tus respuestas")
+    st.caption("Practica tus habilidades con una IA que evoluciona según tus respuestas")
 
     if 'historial' not in st.session_state:
         st.session_state.historial = []
@@ -241,7 +284,7 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        personalidad = st.selectbox("Personalidad:", list(SPARRING_PERSONALITIES.keys()))
+        personalidad = st.selectbox("Elige una personalidad para practicar:", list(SPARRING_PERSONALITIES.keys()))
     with col2:
         dificultad = st.radio("Dificultad", ["Fácil", "Medio", "Difícil"], index=1)
         temp_map = {"Fácil": 0.9, "Medio": 0.7, "Difícil": 0.5}
@@ -270,15 +313,15 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
                 st.markdown(f"<div class='coach-msg'>🧑‍🏫 Coach: {m['content']}</div>", unsafe_allow_html=True)
 
         if st.session_state.contador_mensajes >= 12:
-            st.warning("🏁 Límite de 12 mensajes alcanzado.")
+            st.warning("🏁 Has alcanzado el límite de 12 mensajes. La práctica ha terminado.")
             if st.session_state.puntuaciones:
                 promedio = sum(st.session_state.puntuaciones) / len(st.session_state.puntuaciones)
-                st.success(f"Puntuación promedio: {promedio:.1f}/10")
+                st.success(f"🏁 Práctica terminada. Puntuación promedio: {promedio:.1f}/10")
                 with st.spinner("Generando resumen..."):
                     resumen = resumen_final(st.session_state.historial, st.session_state.puntuaciones)
-                st.subheader("📋 Resumen")
+                st.subheader("📋 Resumen de la sesión")
                 st.write(resumen)
-                txt_resumen = f"Resumen de práctica - Gym Social\nPersonalidad: {personalidad}\nPuntuación media: {promedio:.1f}/10\n\n{resumen}"
+                txt_resumen = f"Resumen de práctica - Gym Social\n\nPersonalidad: {personalidad}\nPuntuación media: {promedio:.1f}/10\n\n{resumen}"
                 st.download_button("📥 Descargar informe (TXT)", data=txt_resumen, file_name="resumen_practica.txt",
                                    mime="text/plain")
                 st.balloons()
@@ -286,54 +329,55 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
         else:
             with st.form("sparring_form", clear_on_submit=True):
                 user_input = st.text_area("Tu mensaje:", key="sparring_input")
-                if st.form_submit_button("Enviar") and user_input:
-                    with st.spinner("Coach evaluando..."):
-                        evaluacion = evaluar_mensaje(st.session_state.historial, user_input)
-                        punt = evaluacion['puntuacion']
-                        consejo = evaluacion['consejo']
-                        st.session_state.puntuaciones.append(punt)
+                if st.form_submit_button("Enviar"):
+                    if user_input:
+                        with st.spinner("Coach evaluando..."):
+                            evaluacion = evaluar_mensaje(st.session_state.historial, user_input)
+                            punt = evaluacion['puntuacion']
+                            consejo = evaluacion['consejo']
+                            st.session_state.puntuaciones.append(punt)
 
-                    st.session_state.historial.append({"role": "user", "content": user_input})
-                    st.session_state.contador_mensajes += 1
+                        st.session_state.historial.append({"role": "user", "content": user_input})
+                        st.session_state.contador_mensajes += 1
 
-                    with st.spinner(f"{personalidad} escribiendo..."):
-                        respuesta = responder_ia(st.session_state.historial, personalidad, st.session_state.nivel,
-                                                 temperatura)
-                        st.session_state.historial.append({"role": "ia", "content": respuesta})
+                        with st.spinner(f"{personalidad} está escribiendo..."):
+                            respuesta = responder_ia(st.session_state.historial, personalidad, st.session_state.nivel,
+                                                     temperatura=temperatura)
+                            st.session_state.historial.append({"role": "ia", "content": respuesta})
 
-                    st.session_state.historial.append(
-                        {"role": "coach", "content": f"{consejo} (Puntuación: {punt}/10)"})
+                        st.session_state.historial.append(
+                            {"role": "coach", "content": f"{consejo} (Puntuación: {punt}/10)"})
 
-                    if st.session_state.contador_mensajes % 4 == 0 and st.session_state.contador_mensajes > 0:
-                        ultimas_punt = st.session_state.puntuaciones[-4:]
-                        promedio = sum(ultimas_punt) / len(ultimas_punt)
-                        if promedio >= 7 and st.session_state.nivel < 2:
-                            st.session_state.nivel += 1
-                            st.success(
-                                f"🌟 ¡Subiste de nivel! Ahora {personalidad} está en nivel {st.session_state.nivel + 1}/3")
-                        elif promedio < 4 and st.session_state.nivel > 0:
-                            st.session_state.nivel -= 1
-                            st.warning(
-                                f"📉 Bajaste de nivel. {personalidad} ahora está en nivel {st.session_state.nivel + 1}/3")
+                        if st.session_state.contador_mensajes % 4 == 0 and st.session_state.contador_mensajes > 0:
+                            ultimas_punt = st.session_state.puntuaciones[-4:]
+                            promedio = sum(ultimas_punt) / len(ultimas_punt)
+                            if promedio >= 7 and st.session_state.nivel < 2:
+                                st.session_state.nivel += 1
+                                st.success(
+                                    f"🌟 ¡Subiste de nivel! Ahora {personalidad} está en nivel {st.session_state.nivel + 1}/3")
+                            elif promedio < 4 and st.session_state.nivel > 0:
+                                st.session_state.nivel -= 1
+                                st.warning(
+                                    f"📉 Bajaste de nivel. {personalidad} ahora está en nivel {st.session_state.nivel + 1}/3")
 
-                    st.rerun()
+                        st.rerun()
 
         if st.button("Terminar práctica antes de tiempo"):
             if st.session_state.puntuaciones:
                 promedio = sum(st.session_state.puntuaciones) / len(st.session_state.puntuaciones)
-                st.success(f"Puntuación promedio: {promedio:.1f}/10")
+                st.success(f"🏁 Práctica terminada. Puntuación promedio: {promedio:.1f}/10")
                 with st.spinner("Generando resumen..."):
                     resumen = resumen_final(st.session_state.historial, st.session_state.puntuaciones)
-                st.subheader("📋 Resumen")
+                st.subheader("📋 Resumen de la sesión")
                 st.write(resumen)
-                txt_resumen = f"Resumen de práctica - Gym Social\nPersonalidad: {personalidad}\nPuntuación media: {promedio:.1f}/10\n\n{resumen}"
+                txt_resumen = f"Resumen de práctica - Gym Social\n\nPersonalidad: {personalidad}\nPuntuación media: {promedio:.1f}/10\n\n{resumen}"
                 st.download_button("📥 Descargar informe (TXT)", data=txt_resumen, file_name="resumen_practica.txt",
                                    mime="text/plain")
                 st.balloons()
             st.session_state.sparring_activo = False
 
 # ================================================================
-# PILAR 3: EL ESPEJO
+# PILAR 3: EL ESPEJO (SIN CAMBIOS, YA ACEPTA HASTA 3 IMÁGENES)
 # ================================================================
 elif herramienta_seleccionada == "🪞 Auditoría de Perfil":
     st.title("🪞 Gym Social – El Espejo")
@@ -353,6 +397,10 @@ elif herramienta_seleccionada == "🪞 Auditoría de Perfil":
             col.image(img, caption=f"Captura {i + 1}", width=200)
 
         if st.button("🪞 Analizar mi perfil"):
+            if len(images) > 3:
+                st.warning("⚠️ Máximo 3 capturas permitidas. Se analizarán solo las tres primeras.")
+                images = images[:3]
+
             descripciones = []
             progress_bar = st.progress(0)
             for i, img in enumerate(images):
