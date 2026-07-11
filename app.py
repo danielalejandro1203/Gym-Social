@@ -8,6 +8,7 @@ from monitor import extraer_chat_qwen, eliminar_replies, analizar_con_deepseek
 from icebreaker import extraer_perfil_qwen, generar_icebreakers
 from sparring import (SPARRING_PERSONALITIES, evaluar_mensaje, responder_ia, resumen_final)
 from espejo import analizar_imagen_perfil, generar_auditoria
+from salvavidas import extraer_contexto_salvavidas, generar_respuesta_salvavidas
 
 # ------------------------------------------------------------
 # INTERFAZ PRINCIPAL
@@ -43,8 +44,8 @@ st.sidebar.title("🏋️ Gym Social")
 pilares_disponibles = {
     "Pilar 1: El Monitor": ["📊 Monitor de Chats", "🧊 Icebreaker"],
     "Pilar 2: El Sparring": ["🥊 Entrenamiento"],
-    "Pilar 3: El Espejo": ["🪞 Auditoría de Perfil"],
-    "Pilar 4: La Arena": ["🚧 Próximamente"]
+    "Pilar 3: El Espejo": ["🔭 Auditoría de Perfil"],
+    "Pilar 4: La Arena": ["⛑️ Salva Vidas", "🚧 Modo Alas (próximamente)"]
 }
 
 pilar_seleccionado = st.sidebar.selectbox("Selecciona un pilar:", list(pilares_disponibles.keys()))
@@ -379,8 +380,8 @@ elif herramienta_seleccionada == "🥊 Entrenamiento":
 # ================================================================
 # PILAR 3: EL ESPEJO (SIN CAMBIOS, YA ACEPTA HASTA 3 IMÁGENES)
 # ================================================================
-elif herramienta_seleccionada == "🪞 Auditoría de Perfil":
-    st.title("🪞 Gym Social – El Espejo")
+elif herramienta_seleccionada == "🔭 Auditoría de Perfil":
+    st.title("🔭 Gym Social – El Espejo")
     st.caption("Sube capturas de tu perfil y descubre cómo mejorarlo")
 
     uploaded_files = st.file_uploader(
@@ -427,3 +428,60 @@ elif herramienta_seleccionada == "🪞 Auditoría de Perfil":
                     st.write(auditoria.get('consejos_estilo', ''))
 
                 st.info(f"🎯 **Misión de hoy:** {auditoria.get('mision_diaria', '')}")
+
+# ================================================================
+# PILAR 4: LA ARENA - SALVA VIDAS
+# ================================================================
+elif herramienta_seleccionada == "⛑️ Salva Vidas":
+    st.title("🚨 Gym Social – Salva Vidas")
+    st.caption("¿Atascado en una conversación? Sube la captura y recibe una respuesta al instante")
+
+    if 'mensajes_salvavidas' not in st.session_state:
+        st.session_state.mensajes_salvavidas = None
+    if 'extraccion_salvavidas' not in st.session_state:
+        st.session_state.extraccion_salvavidas = False
+    if 'respuesta_salvavidas' not in st.session_state:
+        st.session_state.respuesta_salvavidas = None
+
+    uploaded_file = st.file_uploader("Sube la captura del momento crítico", type=["png","jpg","jpeg"], key="salvavidas_upload")
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Captura", width=300)
+
+        tono = st.selectbox(
+            "¿Qué tono buscas?",
+            ["Divertido", "Gracioso", "Provocativo", "Empático"],
+            index=0
+        )
+
+        if st.button("👁️ Extraer contexto"):
+            with st.spinner("Analizando la conversación..."):
+                mensajes = extraer_contexto_salvavidas(image)
+                st.session_state.mensajes_salvavidas = mensajes
+                st.session_state.extraccion_salvavidas = True
+                st.session_state.respuesta_salvavidas = None  # Reset respuesta anterior
+
+        if st.session_state.extraccion_salvavidas:
+            mensajes = st.session_state.mensajes_salvavidas
+            st.subheader("📋 Conversación detectada")
+            if mensajes:
+                for msg in mensajes:
+                    quien = "TÚ" if msg['sender'] == 'TÚ' else "ELLA"
+                    st.write(f"**{quien}:** {msg['message']}")
+            else:
+                st.warning("No se encontraron mensajes claros. Intenta con otra captura.")
+
+            if st.checkbox("¿La extracción es correcta?"):
+                creatividad = st.slider("Creatividad", 0.7, 1.5, 0.95, 0.05)
+
+                if st.button("🚨 ¡Sácame de este apuro!"):
+                    with st.spinner("Generando respuesta de rescate..."):
+                        respuesta = generar_respuesta_salvavidas(mensajes, tono.lower(), temperatura=creatividad)
+                        st.session_state.respuesta_salvavidas = respuesta
+
+                if st.session_state.respuesta_salvavidas:
+                    st.success("✅ Respuesta lista:")
+                    st.code(st.session_state.respuesta_salvavidas, language=None)
+                    copy_button(st.session_state.respuesta_salvavidas)
+            else:
+                st.warning("Corrige la extracción antes de continuar.")
