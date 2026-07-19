@@ -1,4 +1,7 @@
-streamlit
-openai
+fastapi
+uvicorn
+supabase
 python-dotenv
+openai
 Pillow
+streamlit
